@@ -18,7 +18,7 @@ Build a free, paper-first NHL game-line system: GitHub pulls data and odds into 
 | Nights used | 1–3 per week, never Monday, Thursday or Sunday |
 | Real money | Paper only until CLV beats your after-tax hurdle (Taxes section) |
 
-The money outlook is weak: NHL game lines are efficient, and if you take the standard deduction you need roughly a 7–12% edge just to break even after tax.
+The money outlook is weak: NHL game lines are efficient, and if you take the standard deduction you need roughly an 8–14% edge just to break even after federal and Indiana tax.
 
 ## How it works
 
@@ -30,9 +30,9 @@ Claude reads and writes only the sheet; GitHub does every pull and calculation, 
 
 | When (ET) | Who | What happens |
 | --- | --- | --- |
-| Every morning | GitHub (automatic) | Pulls schedule, results and stats from the NHL API and MoneyPuck. Writes the Tonight tab. |
+| Every morning | GitHub (automatic) | Pulls schedule, results and stats from the NHL API and MoneyPuck. Writes the Tonight tab, including the Daily Faceoff projected goalies. |
 | Afternoon, betting nights | GitHub | Pulls FanDuel and Pinnacle odds. Code computes Pinnacle no-vig probability, fair price, EV and stake. Logs an automatic lean for every game line. |
-| 60–90 min before puck drop | You and Claude (chat) | Claude reads Tonight, searches for confirmed goalies and scratches, adjusts probabilities with a reason, and writes picks and parlays to the Picks tab. You choose what to place on FanDuel. |
+| 60–90 min before puck drop | You and Claude (chat) | Claude reads Tonight, searches for confirmed goalies and scratches, adjusts probabilities with a reason in the Tonight tab, and writes picks and parlays to the Picks and Parlays tabs. You choose what to place on FanDuel. |
 | \~15 min before each start-time group | GitHub | Saves closing prices and discards any snapshot taken after puck drop. The sheet computes CLV. |
 | Weekly | You and Claude | Review tab: CLV by market, automatic leans vs Claude picks, calibration. Adjust together. |
 
@@ -71,17 +71,17 @@ Every tool is free at this scope; the binding limits are Odds API credits and yo
 | [Google Sheets API](https://developers.google.com/sheets/api/limits) + service account | Scripts write to your sheet | Free; 300 requests/minute per project |
 | Google Sheets connector | Claude reads Tonight and writes Picks in chat | Free; connected in claude.ai |
 | Odds API Google Sheets add-on | Fallback if the hour-15 checkpoint is missed | No code needed; scheduling not verified |
-| Claude Project "NHL System" | Holds a \~1,500-word rulebook distilled from your guide | Your plan; estimated 5–10k tokens per night (not measured) |
+| Claude Project "NHL System" | Holds the Project instructions, a \~1,500-word rulebook distilled from your guide, and this overview | Your plan; estimated 5–10k tokens per night (not measured) |
 
 Pinnacle odds come from its public website and may be delayed, so FanDuel's close is the backup CLV benchmark.
 
 ## Spreadsheet design
 
-Six tabs; only Tonight and Picks are touched in the nightly chat, which keeps Claude's token use small.
+Six tabs; only Tonight, Picks and Parlays are touched in the nightly chat, which keeps Claude's token use small.
 
 | Tab | Written by | Key columns |
 | --- | --- | --- |
-| Tonight | GitHub | game\_id, start time, home, away, B2B flags, market, line, FanDuel price, Pinnacle no-vig probability, fair price, EV, auto lean |
+| Tonight | GitHub; Claude fills claude\_prob and claude\_reason | game\_id, start time, home, away, B2B flags, projected\_goalies, market, line, FanDuel price, Pinnacle no-vig probability (baseline\_prob), fair price, baseline\_ev, auto lean, claude\_prob, claude\_reason, adjusted\_ev (formula: EV from claude\_prob if filled, else baseline\_prob), stake\_units |
 | Odds\_Snapshots | GitHub (append only) | snapshot time, game\_id, book, market, side, line, price, start time, pre-start check |
 | Picks | Claude, then you | pick time, game\_id, market, side, price, baseline probability, Claude probability, reason, EV, stake (units), placed? (yes/no), actual price |
 | Parlays | Claude, then you | ticket id, leg ids, combined price, stake, placed?, result |
@@ -123,23 +123,23 @@ Three groups are graded separately so you can see where any edge comes from:
 | Claude-adjusted picks | Whether Claude's goalie and news adjustments add value over the baseline |
 | Bets you actually placed | Whether your own choices beat the picks you skipped |
 
-Also tracked: calibration (picks called 55–60% should win about that often), Brier score per group, parlay legs' CLV, and ROI shown with ±2 standard errors. Every logged pick counts toward the 200-pick test, including ones you don't bet.
+Also tracked: calibration (picks called 55–60% should win about that often), Brier score per group, parlay legs' CLV, and ROI shown with ±2 standard errors. Bet candidates and leans count toward the 200-pick test, including ones you don't bet; passes are logged but don't count.
 
 ## Taxes and the real-money rule
 
 You're unsure whether you itemize, so the plan assumes the standard deduction: paper only.
 
-Why tax matters: from 2026 only 90% of gambling losses are deductible federally, and only if you itemize. Indiana allows no loss deduction and taxes all winnings at 2.95% plus county tax. On the standard deduction, every winning bet's profit is taxed and losses offset nothing.
+Why tax matters: from 2026 only 90% of gambling losses are deductible federally, and only if you itemize. Indiana reportedly allows no loss deduction (older source; confirm with the Indiana Department of Revenue) and taxes winnings at 2.95% for 2026 (2.90% for 2027) plus county tax. On the standard deduction, every winning bet's profit is taxed and losses offset nothing.
 
-Approximate tax per $1 wagered at -110 with about a 50% hit rate (county tax not included):
+Approximate tax per $1 wagered at -110 with about a 50% hit rate (federal plus Indiana's state rate; county tax adds roughly another point):
 
 | Your filing | Tax per $1 bet | Edge needed to break even |
 | --- | --- | --- |
 | Itemize | about 1.5–3¢ | about 2–3% |
-| Standard deduction, 12% federal bracket | about 7¢ | about 7% |
-| Standard deduction, 22% federal bracket | about 11–12¢ | about 11–12% |
+| Standard deduction, 12% federal bracket | about 8¢ | about 8% |
+| Standard deduction, 22% federal bracket | about 13–14¢ | about 13–14% |
 
-**Real-money rule:** after 200 logged picks or by Feb 28, 2027 (whichever comes first), bet real money only if average CLV against the Pinnacle close beats your hurdle from the table. Public-data edges of 7–12% are not realistic, so unless you itemize, expect to stay on paper.
+**Real-money rule:** after 200 logged picks or by Feb 28, 2027 (whichever comes first), bet real money only if average CLV against the Pinnacle close beats your hurdle from the table. Public-data edges of 8–14% are not realistic, so unless you itemize, expect to stay on paper.
 
 - [ ] Check last year's return: did you itemize (Schedule A) or take the standard deduction?
 
@@ -190,3 +190,4 @@ Checked October 16, 2026.
 - [wild-tracker (CLV tracking reference)](https://github.com/osmond/wild-tracker)
 - [edge-scanner (+EV vs Pinnacle reference)](https://github.com/DeliciousPipe1326/arbitrage-scanner)
 - Tax rules: Section 8 of your NHL Betting Guide and its sources (CPA Practice Advisor, Indiana DOR, Bloomberg Tax)
+- [Tax Foundation: Indiana 2026 income tax rate](https://taxfoundation.org/location/indiana/)
