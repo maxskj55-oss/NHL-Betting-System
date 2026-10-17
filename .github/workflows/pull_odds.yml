@@ -1,0 +1,54 @@
+name: Pull odds
+
+on:
+  schedule:
+    # Tue, Wed, Fri, Sat at 3:52 pm Eastern (off the hour to avoid the top-of-hour queue).
+    - cron: "52 15 * * 2,3,5,6"
+      timezone: "America/New_York"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: saved fixtures, no API calls, no credits"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pull-odds
+  cancel-in-progress: false
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Tests (no pull if these fail)
+        run: python -m pytest -q
+
+      - name: Pull odds
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: python -m nhl_betting.pull_odds $DRY_RUN
+
+      # Until the Google Sheet exists: the CSV and raw API response are saved here.
+      - name: Upload snapshot CSV and raw response
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: odds-snapshots-${{ github.run_id }}
+          path: output/
+          if-no-files-found: warn
+          retention-days: 90

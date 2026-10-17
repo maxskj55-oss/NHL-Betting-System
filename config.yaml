@@ -1,0 +1,28 @@
+# Settings only. Secrets come from environment variables (GitHub Secrets):
+# ODDS_API_KEY, GOOGLE_SERVICE_ACCOUNT_JSON, SHEET_ID.
+
+odds_api:
+  base_url: https://api.the-odds-api.com/v4
+  sport: icehockey_nhl
+  markets: [h2h, spreads, totals]
+  bookmakers: [fanduel, pinnacle]   # up to 10 bookmakers count as 1 region
+  odds_format: american
+  timeout_seconds: 20
+
+budget:
+  # Fail before a pull if x-requests-used + this pull's cost would exceed this.
+  monthly_credits: 300
+
+slate:
+  # "Tonight" = now until this hour (local time) the next morning.
+  timezone: America/New_York
+  window_end_hour_local: 6
+
+output:
+  sink: csv                          # Sheets sink arrives with the Google Sheet setup
+  csv_path: output/odds_snapshots.csv
+  raw_dir: output/raw                # raw API responses, kept for new fixtures
+
+fixtures:
+  events: tests/fixtures/events_sample.json
+  odds: tests/fixtures/odds_sample.json

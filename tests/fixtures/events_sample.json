@@ -1,0 +1,26 @@
+[
+  {
+    "id": "a1f0c3d2e4b5a6978812345678abcd01",
+    "sport_key": "icehockey_nhl",
+    "sport_title": "NHL",
+    "commence_time": "2026-10-17T23:00:00Z",
+    "home_team": "Toronto Maple Leafs",
+    "away_team": "Boston Bruins"
+  },
+  {
+    "id": "b2e1d4c3f5a6b7089923456789bcde02",
+    "sport_key": "icehockey_nhl",
+    "sport_title": "NHL",
+    "commence_time": "2026-10-18T01:00:00Z",
+    "home_team": "Colorado Avalanche",
+    "away_team": "Dallas Stars"
+  },
+  {
+    "id": "c3f2e5d4a6b7c8190034567890cdef03",
+    "sport_key": "icehockey_nhl",
+    "sport_title": "NHL",
+    "commence_time": "2026-10-18T02:00:00Z",
+    "home_team": "Vegas Golden Knights",
+    "away_team": "Edmonton Oilers"
+  }
+]

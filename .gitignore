@@ -9,3 +9,6 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+
+# Local run output (CSV + raw API responses)
+output/
