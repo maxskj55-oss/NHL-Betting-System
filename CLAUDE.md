@@ -32,8 +32,8 @@ Column names are shared with the claude.ai Project's rulebook. Don't rename or r
 
 | Tab | Written by | Rules |
 | --- | --- | --- |
-| Tonight | Code; Claude fills `claude_prob`, `claude_reason` | Today's games only. Never overwrite `claude_prob` or `claude_reason`; code never writes `adjusted_ev` either. `adjusted_ev` is a sheet formula: EV from `claude_prob` if filled, else `baseline_prob`. Must include `projected_goalies` (Daily Faceoff projection when the baseline was captured, written by Pull odds). One row per game until step 3, then one row per game × market × side (key: `game_id`, `market`, `side`). |
-| Tonight_Archive | Code, append only | Past days' Tonight rows, copied whole (Claude's cells included) before they leave Tonight. Same columns plus `archived_at_utc`. |
+| Tonight | Code; Claude fills `claude_prob`, `claude_reason` | Today's games only. Never overwrite `claude_prob` or `claude_reason`. The morning job writes one game row per game (`market` blank); Pull odds turns it into one row per game × market × side (key: `game_id`, `market`, `side`) from the latest pre-start snapshot. `market` is `moneyline`, `puck_line` or `total`; `side` is the NHL team code (as in `home`/`away`) or `over`/`under`; `line` is FanDuel's. `adjusted_ev` and `stake_units` are sheet formulas that code writes (never values): `adjusted_ev` = EV of `fanduel_price` at `claude_prob` if filled and `claude_line` is blank or equals `line`, else at `baseline_prob`; `stake_units` from `adjusted_ev` using the bands in config. `claude_line` (last column, added in step 3) is written by code once: the line the row showed when Pull odds first saw `claude_prob` filled. Must include `projected_goalies` (Daily Faceoff projection when the baseline was captured, written by Pull odds; later step). |
+| Tonight_Archive | Code, append only | Past days' Tonight rows, copied whole (Claude's cells and the formulas' computed values included) before they leave Tonight. Same columns plus `archived_at_utc`; `claude_line` comes after `archived_at_utc` because it was added later. |
 | Game_Map | Code, append only | `odds_event_id` → NHL `game_id`; join key from odds to results. |
 | Odds_Snapshots | Code, append only | Never edit or delete rows. Drop any snapshot taken after puck drop before writing. |
 | Picks, Parlays | Claude, then me | Code reads only, except Results fills closing prices and CLV. |
@@ -42,7 +42,9 @@ Column names are shared with the claude.ai Project's rulebook. Don't rename or r
 
 ## Math (must match the rulebook)
 
-- No-vig probability: proportional (divide each side's implied probability by the sum).
+- No-vig probability: proportional (divide each side's implied probability by the sum). Pinnacle is the baseline; implied probabilities use the exact American price.
+- Baseline (step 3): `baseline_prob` = Pinnacle no-vig for the same side and line; `fair_price` = American odds of `baseline_prob`; `baseline_ev` = `baseline_prob` × FanDuel decimal − 1. If the books hang different puck lines or totals, no conversion is guessed: baseline blank, `auto_lean` = "pass: line mismatch". Pinnacle missing: "pass: no baseline".
+- `auto_lean` from `baseline_ev`: "bet candidate" at `pricing.bet_candidate_min_ev` (3%) or more, "lean" above 0, "pass" at 0 or below. `stake_units` from `adjusted_ev`: 3–5% = 0.5, 5–8% = 0.75, 8% or more = 1.0, maximum 1.5, 0 below 3% (`pricing.stake_bands`, `pricing.max_units`).
 - CLV = decimal price taken × closing no-vig probability of that side − 1. Pinnacle's close first; FanDuel's no-vig close if Pinnacle is missing.
 - Settlement: moneyline, puck line and totals include OT and shootout; the shootout winner gets +1 goal and the total gets exactly +1 goal. Whole-number totals push.
 
@@ -69,6 +71,7 @@ Report what you ran and what you saw. Don't claim a step works from code reading
 - **No automatic retries.** If a live run fails (scheduled or manual), don't start another. Report the error from the run page and wait for me. Re-run only when I say to, and at most once per request.
 - Projected goalies (later step) belong in the Pull odds job, captured at odds-pull time, not in the morning job.
 - For closing prices (step 4), one manually started evening job can sleep until each start-time group (about 15 minutes before) instead of many runs.
+- Step 4 note: Results should settle each pick at the line it was taken, not only at the last snapshot's line.
 
 ## Plan first
 

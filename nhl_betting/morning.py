@@ -10,8 +10,8 @@ from the sheet instead). Order of work:
 1. Game_Map: map Odds API events in Odds_Snapshots to NHL game_ids (append only).
 2. Results: settle final games from the last few days not yet in Results.
 3. Tonight: move past days' rows to Tonight_Archive, then add or refresh one row
-   per game today. Only code-owned cells are written; claude_prob,
-   claude_reason and adjusted_ev are never touched.
+   per game today. Only code-owned game cells are written; claude_prob,
+   claude_reason and the odds columns (Pull odds, step 3) are never touched.
 
 Exit codes: 0 ok, 1 error, 3 API shape changed or a score can't be settled.
 """
@@ -44,21 +44,26 @@ from .tabs import MemoryTab, Tab, norm
 log = logging.getLogger("nhl_betting.morning")
 
 # ---- Sheet contract (shared with the claude.ai Project's rulebook) -----------
-# Tonight: one row per game now; step 3 adds one row per market and side.
+# Tonight: this job writes one placeholder row per game (market blank); Pull odds
+# turns it into one row per game x market x side (tonight_lines.py).
+# claude_line was added at the end in step 3 so existing columns keep their order.
 TONIGHT_COLUMNS: tuple[str, ...] = (
     "game_id", "game_date_et", "start_time_utc", "start_time_et", "home", "away",
     "home_b2b", "away_b2b", "projected_goalies", "market", "side", "line",
     "fanduel_price", "baseline_prob", "fair_price", "baseline_ev", "auto_lean",
-    "claude_prob", "claude_reason", "adjusted_ev", "stake_units",
+    "claude_prob", "claude_reason", "adjusted_ev", "stake_units", "claude_line",
 )
 TONIGHT_OWNED: tuple[str, ...] = (  # what this job writes
     "game_id", "game_date_et", "start_time_utc", "start_time_et", "home", "away",
     "home_b2b", "away_b2b",
 )
-TONIGHT_PROTECTED: tuple[str, ...] = ("claude_prob", "claude_reason", "adjusted_ev")
+TONIGHT_PROTECTED: tuple[str, ...] = ("claude_prob", "claude_reason")   # Claude's; never written
+TONIGHT_FORMULAS: tuple[str, ...] = ("adjusted_ev", "stake_units")     # formulas only, never values
 TONIGHT_KEY: tuple[str, ...] = ("game_id", "market", "side")
 
-ARCHIVE_COLUMNS: tuple[str, ...] = TONIGHT_COLUMNS + ("archived_at_utc",)
+# Same columns plus archived_at_utc; claude_line comes after it because it was
+# added later and existing columns keep their order.
+ARCHIVE_COLUMNS: tuple[str, ...] = TONIGHT_COLUMNS[:-1] + ("archived_at_utc", "claude_line")
 ARCHIVE_KEY: tuple[str, ...] = ("game_date_et",) + TONIGHT_KEY
 
 RESULTS_COLUMNS: tuple[str, ...] = (
@@ -296,7 +301,8 @@ def live_fetcher(cfg: Config) -> Callable[[date], list[Game]]:
 def memory_tabs(cfg: Config) -> MorningTabs:
     m = cfg.morning
     return MorningTabs(
-        tonight=MemoryTab(m.tonight_tab, TONIGHT_COLUMNS, TONIGHT_PROTECTED),
+        tonight=MemoryTab(m.tonight_tab, TONIGHT_COLUMNS, TONIGHT_PROTECTED,
+                          formulas=TONIGHT_FORMULAS),
         archive=MemoryTab(m.archive_tab, ARCHIVE_COLUMNS),
         results=MemoryTab(m.results_tab, RESULTS_COLUMNS, RESULTS_PROTECTED),
         game_map=MemoryTab(m.game_map_tab, GAME_MAP_COLUMNS),
@@ -306,11 +312,16 @@ def memory_tabs(cfg: Config) -> MorningTabs:
 def sheet_tabs(cfg: Config, session, sid: str) -> MorningTabs:
     m = cfg.morning
     return MorningTabs(
-        tonight=SheetTab(session, sid, m.tonight_tab, TONIGHT_COLUMNS, TONIGHT_PROTECTED).ensure(),
+        tonight=tonight_sheet_tab(cfg, session, sid),
         archive=SheetTab(session, sid, m.archive_tab, ARCHIVE_COLUMNS).ensure(),
         results=SheetTab(session, sid, m.results_tab, RESULTS_COLUMNS, RESULTS_PROTECTED).ensure(),
         game_map=SheetTab(session, sid, m.game_map_tab, GAME_MAP_COLUMNS).ensure(),
     )
+
+
+def tonight_sheet_tab(cfg: Config, session, sid: str) -> SheetTab:
+    return SheetTab(session, sid, cfg.morning.tonight_tab, TONIGHT_COLUMNS, TONIGHT_PROTECTED,
+                    formulas=TONIGHT_FORMULAS).ensure()
 
 
 def dry_run_snapshots(cfg: Config) -> list[dict]:

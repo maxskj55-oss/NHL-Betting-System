@@ -42,7 +42,11 @@ def test_columns_are_the_contract():
     assert TONIGHT_COLUMNS[:8] == TONIGHT_OWNED
     assert {"claude_prob", "claude_reason", "adjusted_ev", "projected_goalies",
             "baseline_prob", "fanduel_price", "stake_units"} <= set(TONIGHT_COLUMNS)
-    assert ARCHIVE_COLUMNS[:-1] == TONIGHT_COLUMNS
+    # Step 3 added claude_line at the end; earlier columns keep their order.
+    assert TONIGHT_COLUMNS[-1] == "claude_line" and TONIGHT_COLUMNS.index("stake_units") == 20
+    assert ARCHIVE_COLUMNS == TONIGHT_COLUMNS[:-1] + ("archived_at_utc", "claude_line")
+    assert set(TONIGHT_PROTECTED) == {"claude_prob", "claude_reason"}
+    assert set(morning.TONIGHT_FORMULAS) == {"adjusted_ev", "stake_units"}
     assert {"ot_so", "ml_winner", "pl_home_-1.5", "pl_away_-1.5", "total_goals",
             "closing_fanduel", "closing_pinnacle", "clv"} <= set(RESULTS_COLUMNS)
     assert GAME_MAP_COLUMNS[:2] == ("odds_event_id", "game_id")

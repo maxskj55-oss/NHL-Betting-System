@@ -8,6 +8,8 @@ from pathlib import Path
 
 import yaml
 
+from .pricing import StakeBand
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config.yaml"
 
@@ -47,6 +49,7 @@ class Config:
     nhl_api_base_url: str
     nhl_api_timeout_seconds: float
     morning: "MorningConfig"
+    pricing: "PricingConfig"
 
 
 @dataclass(frozen=True)
@@ -60,6 +63,31 @@ class MorningConfig:
     csv_dir: Path
     raw_dir: Path
     fixtures_dir: Path
+
+
+@dataclass(frozen=True)
+class PricingConfig:
+    bet_candidate_min_ev: float
+    stake_bands: tuple[StakeBand, ...]   # highest min_ev first
+    max_units: float
+
+
+def _pricing(raw: dict) -> PricingConfig:
+    threshold = float(raw["bet_candidate_min_ev"])
+    bands = tuple(StakeBand(float(b["min_ev"]), float(b["units"])) for b in raw["stake_bands"])
+    max_units = float(raw["max_units"])
+    if threshold <= 0:
+        raise ConfigError("pricing.bet_candidate_min_ev must be above 0")
+    if not bands:
+        raise ConfigError("pricing.stake_bands needs at least one band")
+    if list(bands) != sorted(bands, key=lambda b: b.min_ev, reverse=True):
+        raise ConfigError("pricing.stake_bands must be listed highest min_ev first")
+    if min(b.min_ev for b in bands) < threshold:
+        raise ConfigError("pricing.stake_bands: every min_ev must be at or above "
+                          "bet_candidate_min_ev (leans and passes get 0 units)")
+    if any(b.units <= 0 for b in bands) or max_units <= 0:
+        raise ConfigError("pricing: units and max_units must be above 0")
+    return PricingConfig(threshold, bands, max_units)
 
 
 def _path(value: str) -> Path:
@@ -103,6 +131,7 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> Config:
                 raw_dir=_path(m["raw_dir"]),
                 fixtures_dir=_path(m["fixtures_dir"]),
             ),
+            pricing=_pricing(raw["pricing"]),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ConfigError(f"config.yaml is missing or has a bad value: {exc}") from exc

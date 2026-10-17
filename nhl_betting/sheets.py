@@ -18,7 +18,7 @@ from urllib.parse import quote
 import requests
 
 from .config import ConfigError
-from .tabs import check_writable, norm, row_key
+from .tabs import check_writable, is_formula, norm, row_key
 
 log = logging.getLogger(__name__)
 
@@ -137,6 +137,15 @@ class SheetsSink:
             self._call("PUT", f"{API}/{self.sid}/values/{self._range('A1')}",
                        params={"valueInputOption": "RAW"}, json={"values": [self.columns]})
             return
+        if (getattr(self, "extend_header", False) and len(header) < len(self.columns)
+                and header == self.columns[:len(header)]):
+            # New columns go only at the end; existing columns keep their order.
+            added = self.columns[len(header):]
+            start = _col_letter(len(header) + 1)
+            self._call("PUT", f"{API}/{self.sid}/values/{self._range(f'{start}1')}",
+                       params={"valueInputOption": "RAW"}, json={"values": [added]})
+            log.warning("Sheets: added column(s) %s at the end of %s", ", ".join(added), self.tab)
+            return
         if header != self.columns:
             raise SheetsError(
                 f"{self.tab} header is {header}, expected {self.columns}. "
@@ -246,15 +255,21 @@ class SheetTab(SheetsSink):
     """A keyed tab: read rows, append new rows, update owned cells, delete rows.
 
     Writes go only to the cells named; protected columns (Claude's, step 4's)
-    are refused before any request is sent. ensure() creates the tab and header
-    if missing and refuses a tab whose header differs from the contract.
+    are refused before any request is sent. Formula columns take only formulas,
+    sent with USER_ENTERED so the sheet evaluates them; everything else is RAW
+    (so text like 2026-10-17 stays text). ensure() creates the tab and header
+    if missing, adds columns that the contract appends at the end, and refuses
+    any other header difference.
     """
 
+    extend_header = True
+
     def __init__(self, session, spreadsheet_id: str, tab: str, columns: Sequence[str],
-                 protected: Sequence[str] = (), **kwargs):
+                 protected: Sequence[str] = (), formulas: Sequence[str] = (), **kwargs):
         super().__init__(session, spreadsheet_id, tab, columns, **kwargs)
         self.name = tab
         self.protected = frozenset(protected)
+        self.formulas = frozenset(formulas)
         self._gid: int | None = None
 
     def ensure(self) -> "SheetTab":
@@ -326,18 +341,26 @@ class SheetTab(SheetsSink):
         """One batch request; each cell is its own range so nothing else is touched."""
         if not updates:
             return 0
-        data = []
+        raw, formulas = [], []
         for rownum, cells in updates:
             check_writable(self, cells, new_row=False)
             if rownum < 2:
                 raise SheetsError(f"{self.tab}: refusing to write the header row")
             for col, value in cells.items():
                 letter = _col_letter(self.columns.index(col) + 1)
-                data.append({"range": f"'{self.tab}'!{letter}{rownum}",
-                             "values": [[_cell_value(value)]]})
-        self._call("POST", f"{API}/{self.sid}/values:batchUpdate",
-                   json={"valueInputOption": "RAW", "data": data})
-        log.info("Updated %d cells in %d rows of %s", len(data), len(updates), self.tab)
+                cell = {"range": f"'{self.tab}'!{letter}{rownum}"}
+                if col in self.formulas:
+                    formulas.append(dict(cell, values=[[value]]))
+                elif is_formula(value):
+                    raise SheetsError(f"{self.tab}: {col} is not a formula column; refusing {value!r}")
+                else:
+                    raw.append(dict(cell, values=[[_cell_value(value)]]))
+        for mode, data in (("RAW", raw), ("USER_ENTERED", formulas)):
+            if data:
+                self._call("POST", f"{API}/{self.sid}/values:batchUpdate",
+                           json={"valueInputOption": mode, "data": data})
+        log.info("Updated %d cells (%d formulas) in %d rows of %s",
+                 len(raw) + len(formulas), len(formulas), len(updates), self.tab)
         return len(updates)
 
     def delete_rows(self, row_numbers: Sequence[int]) -> int:
@@ -358,3 +381,12 @@ class SheetTab(SheetsSink):
             self.max_attempts = saved
         log.info("Deleted %d rows from %s", len(nums), self.tab)
         return len(nums)
+
+    def sort_rows(self, by: Sequence[str]) -> None:
+        """Sort every row below the header, whole rows together (one request)."""
+        specs = [{"dimensionIndex": self.columns.index(c), "sortOrder": "ASCENDING"} for c in by]
+        self._call("POST", f"{API}/{self.sid}:batchUpdate", json={"requests": [{"sortRange": {
+            "range": {"sheetId": self._sheet_gid(), "startRowIndex": 1,
+                      "startColumnIndex": 0, "endColumnIndex": len(self.columns)},
+            "sortSpecs": specs}}]})
+        log.info("Sorted %s by %s", self.tab, ", ".join(by))

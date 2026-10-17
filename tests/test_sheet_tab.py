@@ -7,7 +7,7 @@ from urllib.parse import unquote
 import pytest
 import requests
 
-from nhl_betting.morning import TONIGHT_COLUMNS, TONIGHT_PROTECTED
+from nhl_betting.morning import ARCHIVE_COLUMNS, TONIGHT_COLUMNS, TONIGHT_FORMULAS, TONIGHT_PROTECTED
 from nhl_betting.sheets import SheetsError, SheetTab
 from nhl_betting.tabs import ProtectedColumnError
 
@@ -51,6 +51,10 @@ class FakeGrid:
             for r in json["requests"]:
                 if "addSheet" in r:
                     self.exists = True
+                elif "sortRange" in r:
+                    idx = [sp["dimensionIndex"] for sp in r["sortRange"]["sortSpecs"]]
+                    self.grid[1:] = sorted(self.grid[1:], key=lambda row: [
+                        str(row[i]) if i < len(row) else "" for i in idx])
                 else:
                     rng = r["deleteDimension"]["range"]
                     del self.grid[rng["startIndex"]:rng["endIndex"]]
@@ -76,7 +80,11 @@ class FakeGrid:
                 return Resp(503)
             return Resp(body={"updates": {"updatedRows": len(json["values"])}})
         if method == "PUT":
-            self.grid = [json["values"][0]] + self.grid
+            col = col_index(re.search(r"!([A-Z]+)1$", u).group(1))
+            if col == 0:
+                self.grid = [json["values"][0]] + self.grid
+            else:                                  # extend the header row
+                self.grid[0] = self.grid[0][:col] + list(json["values"][0])
             return Resp()
         if method == "GET":
             if "!A2:" in u:
@@ -86,7 +94,8 @@ class FakeGrid:
 
 
 def tab(grid):
-    return SheetTab(grid, SID, TAB, TONIGHT_COLUMNS, TONIGHT_PROTECTED, backoff_seconds=0)
+    return SheetTab(grid, SID, TAB, TONIGHT_COLUMNS, TONIGHT_PROTECTED, formulas=TONIGHT_FORMULAS,
+                    backoff_seconds=0)
 
 
 def blank_row(**kw):
@@ -157,3 +166,45 @@ def test_delete_is_bottom_up_and_never_retried():
     assert sum(1 for _, u, _ in f.calls if unquote(u).endswith(f"{SID}:batchUpdate")) == 1
     with pytest.raises(SheetsError):
         tab(FakeGrid(TONIGHT_COLUMNS)).delete_rows([1])
+
+
+def test_step3_header_gains_claude_line_at_the_end_only():
+    old_header = list(TONIGHT_COLUMNS[:-1])                 # the step-2 sheet
+    g = FakeGrid(old_header, [blank_row(game_id=1)[:-1]])
+    tab(g).ensure()
+    assert g.grid[0] == list(TONIGHT_COLUMNS)
+    puts = [u for m, u, _ in g.calls if m == "PUT"]
+    assert len(puts) == 1 and puts[0].endswith("'Tonight'!V1")
+    assert g.grid[1][0] == 1                                # data untouched
+    # Archive: claude_line goes after archived_at_utc, existing order kept.
+    a = FakeGrid(list(ARCHIVE_COLUMNS[:-1]))
+    SheetTab(a, SID, TAB, ARCHIVE_COLUMNS, backoff_seconds=0).ensure()
+    assert a.grid[0][-2:] == ["archived_at_utc", "claude_line"]
+    # Reordered or renamed columns are still refused.
+    swapped = list(TONIGHT_COLUMNS[:-1])
+    swapped[0], swapped[1] = swapped[1], swapped[0]
+    with pytest.raises(SheetsError, match="expected"):
+        tab(FakeGrid(swapped)).ensure()
+
+
+def test_formulas_are_user_entered_and_values_stay_raw():
+    g = FakeGrid(TONIGHT_COLUMNS, [blank_row(game_id=1, game_date_et="2026-10-17")])
+    t = tab(g).ensure()
+    t.update_cells([(2, {"line": 6.5, "auto_lean": "pass", "adjusted_ev": "=LET(r,ROW(),1)"})])
+    writes = [b for _, u, b in g.calls if u.endswith("values:batchUpdate")]
+    assert [w["valueInputOption"] for w in writes] == ["RAW", "USER_ENTERED"]
+    assert [d["range"] for d in writes[1]["data"]] == ["'Tonight'!T2"]
+    with pytest.raises(ProtectedColumnError):
+        t.update_cells([(2, {"stake_units": 0.5})])        # a value in a formula column
+    with pytest.raises(SheetsError):
+        t.update_cells([(2, {"side": "=HACK()"})])          # a formula in a value column
+
+
+def test_sort_moves_whole_rows():
+    g = FakeGrid(TONIGHT_COLUMNS, [blank_row(game_id=2, market="total", claude_prob=0.6),
+                                   blank_row(game_id=1, market="moneyline"),
+                                   blank_row(game_id=2, market="moneyline")])
+    tab(g).ensure().sort_rows(("game_id", "market"))
+    rows = [dict(zip(TONIGHT_COLUMNS, r)) for r in g.grid[1:]]
+    assert [(r["game_id"], r["market"]) for r in rows] == [(1, "moneyline"), (2, "moneyline"), (2, "total")]
+    assert rows[2]["claude_prob"] == 0.6

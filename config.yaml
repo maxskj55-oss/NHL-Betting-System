@@ -33,6 +33,19 @@ fixtures:
   events: tests/fixtures/events_sample.json
   odds: tests/fixtures/odds_sample.json
 
+pricing:
+  # Step 3 (CLAUDE.md "Math"). Pinnacle no-vig baseline -> EV of FanDuel's price.
+  # auto_lean: "bet candidate" at or above this EV, "lean" above 0, "pass" at 0 or below.
+  bet_candidate_min_ev: 0.03
+  # stake_units (a sheet formula on adjusted_ev): first band reached, highest first.
+  # Below the lowest band = 0 units (leans and passes). Every band must be at or
+  # above bet_candidate_min_ev so a lean never gets a stake.
+  stake_bands:
+    - {min_ev: 0.08, units: 1.0}
+    - {min_ev: 0.05, units: 0.75}
+    - {min_ev: 0.03, units: 0.5}
+  max_units: 1.5
+
 morning:
   # Daily NHL job (step 2): Tonight, Results, Game_Map. Uses no Odds API credits.
   tonight_tab: Tonight

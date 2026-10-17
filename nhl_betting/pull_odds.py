@@ -1,7 +1,11 @@
-"""Pull tonight's FanDuel and Pinnacle game lines and append them to Odds_Snapshots.
+"""Pull tonight's FanDuel and Pinnacle game lines into Odds_Snapshots, then price Tonight.
 
     python -m nhl_betting.pull_odds            # live: 0-credit check, then a 3-credit pull
     python -m nhl_betting.pull_odds --dry-run  # saved fixtures, no API calls at all
+
+After appending to Odds_Snapshots, the live run fills Tonight from the latest
+pre-start snapshot of each game (tonight_lines.py): one row per game x market
+x side with the Pinnacle no-vig baseline, EV, auto lean and the sheet formulas.
 
 Exit codes: 0 ok (including "no games tonight"), 1 error, 2 over budget, 3 schema change.
 """
@@ -20,7 +24,8 @@ from zoneinfo import ZoneInfo
 
 from .config import Config, ConfigError, get_odds_api_key, load_config
 from .odds_api import BudgetError, OddsApiClient, OddsApiError, check_budget, iso_z
-from .sheets import SheetsError, SheetsSink, authorized_session, get_sheet_id
+from . import tonight_lines
+from .sheets import SheetsError, SheetsSink, authorized_session, get_sheet_id, read_tab
 from .sinks import CsvSink, PrintSink, Sink
 from .snapshots import (COLUMNS, SchemaError, build_rows, coverage_gaps, line_mismatches,
                         parse_time, validate_events)
@@ -59,7 +64,54 @@ def run_dry(cfg: Config, as_of: datetime | None, sink: Sink | None = None) -> in
     report_gaps(events, odds, cfg)
     check_team_names(events)
     (sink or PrintSink(COLUMNS)).append(rows)
+    preview_tonight(cfg)
     return 0
+
+
+def preview_tonight(cfg: Config) -> None:
+    """Dry run of the Tonight step on the newest real odds fixture and its NHL fixture.
+
+    Builds the morning job's game rows in memory, then prices them as a live run
+    would at that snapshot's time. Nothing is written.
+    """
+    from .games import et_date
+    from .morning import (TONIGHT_COLUMNS, dry_run_snapshots, fixture_fetcher, memory_tabs,
+                          print_table)
+    from .morning import run as morning_run
+
+    snapshots = dry_run_snapshots(cfg)
+    if not snapshots:
+        log.info("DRY RUN: no real odds fixture; Tonight preview skipped")
+        return
+    snap = parse_time(snapshots[0]["snapshot_time_utc"])
+    day = et_date(min(parse_time(r["start_time_utc"]) for r in snapshots))
+    tabs = memory_tabs(cfg)
+    morning_run(cfg, day, fixture_fetcher(cfg.morning.fixtures_dir), tabs, snapshots, snap)
+    rep = tonight_lines.apply(tabs.tonight, snapshots, cfg.pricing, snap,
+                              cfg.morning.match_tolerance_hours)
+    shown = []
+    for r in rep.rows:
+        p = tonight_lines.adjusted_prob(r)
+        ev = None if p is None else round(p * tonight_lines.decimal_odds(r["fanduel_price"]) - 1, 4)
+        shown.append(dict(r, adjusted_ev=ev if ev is not None else "",
+                          stake_units=tonight_lines.stake_units(ev, cfg.pricing.stake_bands,
+                                                                cfg.pricing.max_units)))
+    log.info("DRY RUN: Tonight as of %s (adjusted_ev and stake_units shown as the values "
+             "the sheet formulas compute; the sheet gets the formulas)", iso_z(snap))
+    print_table("Tonight", TONIGHT_COLUMNS, shown)
+    log.info("DRY RUN: adjusted_ev formula: %s", tonight_lines.adjusted_ev_formula())
+    log.info("DRY RUN: stake_units formula: %s", tonight_lines.stake_units_formula(cfg.pricing))
+
+
+def update_tonight_live(cfg: Config, now: datetime) -> tonight_lines.TonightReport:
+    """Read Odds_Snapshots (now including this pull) and price Tonight. 0 credits."""
+    from .morning import tonight_sheet_tab
+
+    session = authorized_session()
+    sid = get_sheet_id()
+    snapshots = read_tab(session, sid, cfg.sheet_tab)
+    tab = tonight_sheet_tab(cfg, session, sid)
+    return tonight_lines.apply(tab, snapshots, cfg.pricing, now, cfg.morning.match_tolerance_hours)
 
 
 def report_gaps(events: list[dict], odds: list[dict], cfg: Config) -> None:
@@ -102,9 +154,12 @@ def build_sinks(cfg: Config) -> list[Sink]:
 
 def run_live(cfg: Config, client: OddsApiClient | None = None,
              sinks: list[Sink] | None = None,
-             clock: Callable[[], datetime] = _utc_now) -> int:
+             clock: Callable[[], datetime] = _utc_now,
+             tonight: Callable[[Config, datetime], object] | None = None) -> int:
     client = client or OddsApiClient(cfg.odds_api, get_odds_api_key())
     sinks = sinks if sinks is not None else build_sinks(cfg)
+    if tonight is None and cfg.sink == "sheets":
+        tonight = update_tonight_live
     now = clock()
     start, end = slate_window(now, cfg.slate_timezone, cfg.window_end_hour_local)
     log.info("Slate window %s to %s", iso_z(start), iso_z(end))
@@ -148,6 +203,13 @@ def run_live(cfg: Config, client: OddsApiClient | None = None,
     check_team_names(events)
     for s in sinks:
         s.append(rows)
+    if tonight is not None:
+        try:
+            tonight(cfg, clock())
+        except Exception:
+            log.error("Odds_Snapshots was written, but updating Tonight failed (no credits are "
+                      "needed to fix it; don't re-pull)")
+            raise
     return 0
 
 
@@ -168,7 +230,8 @@ class _AnnotationHandler(logging.Handler):
             _annotate("error", msg)
         elif record.levelno >= logging.WARNING:
             _annotate("warning", msg)
-        elif msg.startswith(("Credits for this run", "Appended", "No games tonight", "DRY RUN: would")):
+        elif msg.startswith(("Credits for this run", "Appended", "No games tonight", "DRY RUN: would",
+                             "SUMMARY")):
             _annotate("notice", msg)
 
 

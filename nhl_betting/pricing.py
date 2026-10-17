@@ -1,18 +1,101 @@
 """Betting math that must match the rulebook (CLAUDE.md, "Math").
 
-Step 2: settlement. Steps 3-4 add no-vig probability, EV and CLV here.
+Step 2: settlement. Step 3: no-vig probability, fair price, EV, auto leans and
+stakes. Step 4 adds CLV here.
 
 Settlement rules: moneyline, puck line and totals include OT and the shootout.
 The shootout winner gets +1 goal and the total gets exactly +1 goal.
 Whole-number totals push.
+
+No-vig: proportional. Each side's implied probability divided by the sum of
+both sides. Prices are American; implied probabilities use the exact price, not
+a rounded decimal.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
+from typing import Sequence
 
 WIN, LOSS, PUSH = "win", "loss", "push"
 OVER, UNDER = "over", "under"
+
+BET_CANDIDATE, LEAN, PASS = "bet candidate", "lean", "pass"
+PASS_LINE_MISMATCH = "pass: line mismatch"
+PASS_NO_BASELINE = "pass: no baseline"
+
+
+# ---- Step 3: no-vig, fair price, EV, leans, stakes ---------------------------
+def _check_american(price: float) -> float:
+    price = float(price)
+    if -100 < price < 100:
+        raise ValueError(f"Not a valid American price: {price:g}")
+    return price
+
+
+def implied_prob(american: float) -> float:
+    """Implied probability with the vig still in: -110 -> 0.5238, +150 -> 0.4."""
+    a = _check_american(american)
+    return 100 / (a + 100) if a > 0 else -a / (-a + 100)
+
+
+def decimal_odds(american: float) -> float:
+    """Exact decimal odds, computed the same way as the sheet formula."""
+    a = _check_american(american)
+    return 1 + a / 100 if a > 0 else 1 - 100 / a
+
+
+def no_vig(prices: Sequence[float]) -> list[float]:
+    """Proportional no-vig probabilities for every side of one market (same order)."""
+    if len(prices) < 2:
+        raise ValueError("No-vig needs every side of the market")
+    implied = [implied_prob(p) for p in prices]
+    total = sum(implied)
+    return [p / total for p in implied]
+
+
+def fair_american(prob: float) -> int:
+    """American price with no vig for this probability, rounded half up: 0.5070 -> -103."""
+    if not 0 < prob < 1:
+        raise ValueError(f"Probability must be between 0 and 1, got {prob}")
+    raw = -100 * prob / (1 - prob) if prob >= 0.5 else 100 * (1 - prob) / prob
+    rounded = int(Decimal(str(abs(raw))).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+    return -rounded if raw < 0 else rounded
+
+
+def expected_value(prob: float, american: float) -> float:
+    """EV per unit staked at this price if the true win probability is `prob`."""
+    return prob * decimal_odds(american) - 1
+
+
+def auto_lean(ev: float, bet_candidate_min_ev: float) -> str:
+    """bet candidate at or above the threshold, lean above 0, pass at 0 or below."""
+    if ev >= bet_candidate_min_ev:
+        return BET_CANDIDATE
+    if ev > 0:
+        return LEAN
+    return PASS
+
+
+@dataclass(frozen=True)
+class StakeBand:
+    min_ev: float
+    units: float
+
+
+def stake_units(ev: float | None, bands: Sequence[StakeBand], max_units: float) -> float:
+    """Units for an EV: the first band (highest first) whose min_ev it reaches, else 0.
+
+    Python copy of the sheet's stake_units formula, used for dry-run previews
+    and tests. The sheet formula is what counts.
+    """
+    if ev is None:
+        return 0.0
+    for band in bands:
+        if ev >= band.min_ev:
+            return min(max_units, band.units)
+    return 0.0
 
 
 class SettlementError(ValueError):
