@@ -15,6 +15,8 @@ import time
 from typing import Any, Sequence
 from urllib.parse import quote
 
+import requests
+
 from .config import ConfigError
 
 log = logging.getLogger(__name__)
@@ -79,7 +81,15 @@ class SheetsSink:
     # -- HTTP -----------------------------------------------------------------
     def _call(self, method: str, url: str, **kwargs) -> dict:
         for attempt in range(1, self.max_attempts + 1):
-            resp = self.session.request(method, url, timeout=30, **kwargs)
+            try:
+                resp = self.session.request(method, url, timeout=30, **kwargs)
+            except requests.RequestException as exc:
+                if attempt < self.max_attempts:
+                    log.warning("Sheets %s, retrying (%d/%d)", type(exc).__name__, attempt,
+                                self.max_attempts)
+                    time.sleep(self.backoff * attempt)
+                    continue
+                raise SheetsError(f"Sheets API unreachable: {type(exc).__name__}") from None
             if resp.status_code == 200:
                 return resp.json() if resp.text else {}
             if resp.status_code in RETRY_STATUSES and attempt < self.max_attempts:
@@ -138,17 +148,62 @@ class SheetsSink:
         if not rows:
             return 0
         values = [[to_sheet_value(c, r[c]) for c in self.columns] for r in rows]
-        res = self._call(
-            "POST", f"{API}/{self.sid}/values/{self._range('A1')}:append",
-            params={"valueInputOption": "RAW", "insertDataOption": "INSERT_ROWS"},
-            json={"values": values},
-        )
+        snaps = {r["snapshot_time_utc"] for r in rows}
+        if len(snaps) != 1:
+            raise SheetsError("All rows in one append must share one snapshot_time_utc")
+        res = self._append_once(values, snaps.pop())
+        if res is None:  # an earlier attempt had already written these rows
+            return len(values)
         written = res.get("updates", {}).get("updatedRows", len(values))
         log.info("Appended %d rows to sheet tab %s (%s)", written, self.tab,
                  res.get("updates", {}).get("updatedRange", "?"))
         if written != len(values):
             raise SheetsError(f"Sheets wrote {written} rows, expected {len(values)}")
         return written
+
+
+    def _rows_with_snapshot(self, snap: str) -> int:
+        got = self._call("GET", f"{API}/{self.sid}/values/{self._range('A:A')}")
+        return sum(1 for row in got.get("values", []) if row and row[0] == snap)
+
+    def _append_once(self, values: list[list], snap: str) -> dict | None:
+        """Append with retries that never duplicate rows.
+
+        Before each retry, count rows already carrying this run's snapshot time.
+        If the previous attempt landed (Google saved it, then the reply was lost
+        or errored), stop instead of writing again.
+        """
+        url = f"{API}/{self.sid}/values/{self._range('A1')}:append"
+        params = {"valueInputOption": "RAW", "insertDataOption": "INSERT_ROWS"}
+        for attempt in range(1, self.max_attempts + 1):
+            if attempt > 1:
+                already = self._rows_with_snapshot(snap)
+                if already == len(values):
+                    log.warning("Sheets: previous attempt had already written %d rows; "
+                                "not writing again", already)
+                    return None
+                if already:
+                    raise SheetsError(
+                        f"Sheets has {already} of {len(values)} rows for snapshot {snap}; "
+                        "stopping so rows aren't duplicated. Check the tab by hand."
+                    )
+            try:
+                resp = self.session.request("POST", url, params=params,
+                                            json={"values": values}, timeout=30)
+            except requests.RequestException as exc:
+                reason = type(exc).__name__
+            else:
+                if resp.status_code == 200:
+                    return resp.json() if resp.text else {}
+                if resp.status_code not in RETRY_STATUSES:
+                    raise SheetsError(self._explain(resp))
+                reason = f"HTTP {resp.status_code}"
+            if attempt == self.max_attempts:
+                raise SheetsError(f"Sheets append failed after {attempt} attempts ({reason})")
+            log.warning("Sheets append %s, checking before retry (%d/%d)", reason, attempt,
+                        self.max_attempts)
+            time.sleep(self.backoff * attempt)
+        return None  # pragma: no cover
 
 
 def _col_letter(n: int) -> str:

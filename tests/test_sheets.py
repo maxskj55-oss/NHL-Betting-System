@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from unittest import mock
 from urllib.parse import unquote
 
+import requests
+
 from nhl_betting.config import ConfigError
 from nhl_betting.sheets import SheetsError, SheetsSink, get_sheet_id, to_sheet_value
 from nhl_betting.snapshots import COLUMNS, build_rows
@@ -29,11 +31,14 @@ class Resp:
 class FakeSheets:
     """Minimal in-memory Sheets API: tabs, header row, appended rows."""
 
-    def __init__(self, tabs=(TAB,), header=None, fail=None):
+    def __init__(self, tabs=(TAB,), header=None, fail=None, append_faults=None):
         self.tabs = list(tabs)
         self.header = header
         self.rows = []
         self.fail = list(fail or [])  # status codes to return before succeeding
+        # Per append attempt: "saved_503" (rows saved, error returned),
+        # "saved_timeout" (rows saved, reply lost), "timeout" (nothing saved), 503 etc.
+        self.append_faults = list(append_faults or [])
         self.calls = []
 
     def request(self, method, url, params=None, json=None, timeout=None):
@@ -46,13 +51,25 @@ class FakeSheets:
         if u.endswith(":batchUpdate"):
             self.tabs.append(json["requests"][0]["addSheet"]["properties"]["title"])
             return Resp()
+        if method == "GET" and u.endswith("!A:A"):
+            col = ([[self.header[0]]] if self.header else []) + [[r[0]] for r in self.rows]
+            return Resp(body={"values": col})
         if method == "GET":
             return Resp(body={"values": [self.header]} if self.header else {})
         if method == "PUT":
             self.header = json["values"][0]
             return Resp()
         if u.endswith(":append"):
+            fault = self.append_faults.pop(0) if self.append_faults else None
+            if fault == "timeout":
+                raise requests.Timeout()
+            if isinstance(fault, int):
+                return Resp(fault, {"error": {"message": "busy"}})
             self.rows.extend(json["values"])
+            if fault == "saved_503":
+                return Resp(503, {"error": {"message": "backend error"}})
+            if fault == "saved_timeout":
+                raise requests.Timeout()
             return Resp(body={"updates": {"updatedRows": len(json["values"]),
                                           "updatedRange": f"{TAB}!A2:M99"}})
         raise AssertionError(f"unexpected {method} {u}")
@@ -114,6 +131,47 @@ class SheetsSinkTest(unittest.TestCase):
         api = FakeSheets(header=list(COLUMNS))
         SheetsSink(api, SID, TAB, COLUMNS).append(sample_rows())
         self.assertTrue(any("'Odds_Snapshots'!A1:append" in u for _, u in api.calls))
+
+
+class AppendRetryTest(unittest.TestCase):
+    def _sink(self, api):
+        return SheetsSink(api, SID, TAB, COLUMNS, backoff_seconds=0)
+
+    def test_saved_then_error_is_not_written_twice(self):
+        api = FakeSheets(header=list(COLUMNS), append_faults=["saved_503"])
+        self.assertEqual(self._sink(api).append(sample_rows()), 34)
+        self.assertEqual(len(api.rows), 34)
+
+    def test_saved_then_reply_lost_is_not_written_twice(self):
+        api = FakeSheets(header=list(COLUMNS), append_faults=["saved_timeout"])
+        self.assertEqual(self._sink(api).append(sample_rows()), 34)
+        self.assertEqual(len(api.rows), 34)
+
+    def test_not_saved_is_retried_once(self):
+        api = FakeSheets(header=list(COLUMNS), append_faults=["timeout", 503])
+        self.assertEqual(self._sink(api).append(sample_rows()), 34)
+        self.assertEqual(len(api.rows), 34)
+
+    def test_earlier_runs_rows_dont_confuse_the_check(self):
+        api = FakeSheets(header=list(COLUMNS))
+        sink = self._sink(api)
+        sink.append(sample_rows())               # an earlier run, same game data
+        later = [dict(r, snapshot_time_utc="2026-10-17T22:00:00Z") for r in sample_rows()]
+        api.append_faults = ["saved_503"]
+        self.assertEqual(sink.append(later), 34)
+        self.assertEqual(len(api.rows), 68)
+
+    def test_gives_up_after_max_attempts(self):
+        api = FakeSheets(header=list(COLUMNS), append_faults=[503, 503, 503])
+        with self.assertRaises(SheetsError):
+            self._sink(api).append(sample_rows())
+        self.assertEqual(api.rows, [])
+
+    def test_mixed_snapshot_times_refused(self):
+        rows = sample_rows()
+        rows[0] = dict(rows[0], snapshot_time_utc="2026-10-17T21:00:00Z")
+        with self.assertRaises(SheetsError):
+            self._sink(FakeSheets(header=list(COLUMNS))).append(rows)
 
 
 class SheetIdTest(unittest.TestCase):

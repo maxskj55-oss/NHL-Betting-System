@@ -18,12 +18,12 @@ concurrency:
 
 jobs:
   pull:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: no surprise OS upgrades
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -42,10 +42,10 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
         run: python -m nhl_betting.pull_odds $DRY_RUN
 
-      # Until the Google Sheet exists: the CSV and raw API response are saved here.
+      # Backup CSV + raw API response (raw files can become tests/fixtures/real/ fixtures).
       - name: Upload snapshot CSV and raw response
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: odds-snapshots-${{ github.run_id }}
           path: output/

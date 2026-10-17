@@ -3,7 +3,7 @@ import unittest
 from collections import Counter
 from datetime import datetime, timezone
 
-from nhl_betting.snapshots import COLUMNS, american_to_decimal, build_rows
+from nhl_betting.snapshots import COLUMNS, american_to_decimal, build_rows, coverage_gaps
 from tests.helpers import load_fixture
 
 BOOKS = ("fanduel", "pinnacle")
@@ -75,6 +75,32 @@ class BuildRowsTest(unittest.TestCase):
             {"key": "h2h_3_way", "outcomes": [{"name": "Draw", "price": 300}]})
         rows, _ = build_rows(odds, BEFORE_ALL, BOOKS, MARKETS)
         self.assertEqual(len(rows), 34)
+
+
+class CoverageTest(unittest.TestCase):
+    def setUp(self):
+        self.events = load_fixture("events_sample.json")
+        self.odds = load_fixture("odds_sample.json")
+
+    def test_fixture_has_one_gap(self):
+        gaps = coverage_gaps(self.events, self.odds, BOOKS, MARKETS)
+        self.assertEqual(gaps, ["Edmonton Oilers @ Vegas Golden Knights: pinnacle missing spreads"])
+
+    def test_game_with_no_odds(self):
+        gaps = coverage_gaps(self.events, self.odds[:2], BOOKS, MARKETS)
+        self.assertIn("Edmonton Oilers @ Vegas Golden Knights: no odds from any book", gaps)
+
+    def test_book_with_no_lines(self):
+        odds = copy.deepcopy(self.odds)
+        odds[0]["bookmakers"] = [b for b in odds[0]["bookmakers"] if b["key"] != "pinnacle"]
+        gaps = coverage_gaps(self.events, odds, BOOKS, MARKETS)
+        self.assertIn("Boston Bruins @ Toronto Maple Leafs: pinnacle has no lines", gaps)
+
+    def test_complete_coverage(self):
+        odds = copy.deepcopy(self.odds)
+        odds[2]["bookmakers"][1]["markets"].insert(1, copy.deepcopy(
+            odds[2]["bookmakers"][0]["markets"][1]))
+        self.assertEqual(coverage_gaps(self.events, odds, BOOKS, MARKETS), [])
 
 
 class PriceTest(unittest.TestCase):

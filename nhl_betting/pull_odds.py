@@ -22,7 +22,9 @@ from .config import Config, ConfigError, get_odds_api_key, load_config
 from .odds_api import BudgetError, OddsApiClient, OddsApiError, check_budget, iso_z
 from .sheets import SheetsError, SheetsSink, authorized_session, get_sheet_id
 from .sinks import CsvSink, PrintSink, Sink
-from .snapshots import COLUMNS, SchemaError, build_rows, parse_time, validate_events
+from .snapshots import (COLUMNS, SchemaError, build_rows, coverage_gaps, parse_time,
+                        validate_events)
+from .teams import team_code
 
 log = logging.getLogger("nhl_betting.pull_odds")
 
@@ -54,8 +56,28 @@ def run_dry(cfg: Config, as_of: datetime | None, sink: Sink | None = None) -> in
              cfg.odds_api.credits_per_pull)
     rows, dropped = build_rows(odds, as_of, cfg.odds_api.bookmakers, cfg.odds_api.markets)
     log.info("%d rows built, %d dropped (game already started)", len(rows), dropped)
+    report_gaps(events, odds, cfg)
+    check_team_names(events)
     (sink or PrintSink(COLUMNS)).append(rows)
     return 0
+
+
+def report_gaps(events: list[dict], odds: list[dict], cfg: Config) -> None:
+    """Warn (shown on the run page) when a game, book or market is missing."""
+    gaps = coverage_gaps(events, odds, cfg.odds_api.bookmakers, cfg.odds_api.markets)
+    if not gaps:
+        log.info("Coverage complete: every game has every book and market")
+        return
+    log.warning("Incomplete lines (%d gaps; pulling later may fill them): %s",
+                len(gaps), "; ".join(gaps))
+
+
+def check_team_names(events: list[dict]) -> None:
+    """Warn about team names the NHL lookup table doesn't know (needed for step 2 matching)."""
+    unknown = sorted({ev[side] for ev in events for side in ("home_team", "away_team")
+                      if team_code(ev[side]) is None})
+    if unknown:
+        log.warning("Unknown team name(s), add to nhl_betting/teams.py: %s", ", ".join(unknown))
 
 
 def _utc_now() -> datetime:
@@ -119,6 +141,8 @@ def run_live(cfg: Config, client: OddsApiClient | None = None,
 
     rows, dropped = build_rows(odds, snapshot_time, cfg.odds_api.bookmakers, cfg.odds_api.markets)
     log.info("%d rows built, %d dropped (game already started)", len(rows), dropped)
+    report_gaps(events, odds, cfg)
+    check_team_names(events)
     for s in sinks:
         s.append(rows)
     return 0

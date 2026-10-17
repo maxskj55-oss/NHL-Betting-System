@@ -104,6 +104,36 @@ def _fmt_price(price: float) -> int | float:
     return int(price) if float(price).is_integer() else price
 
 
+def coverage_gaps(
+    events: list[dict],
+    odds: list[dict],
+    books: Iterable[str],
+    markets: Iterable[str],
+) -> list[str]:
+    """Describe every game / book / market that tonight's pull is missing.
+
+    `events` is tonight's schedule from /events; `odds` is the /odds response.
+    """
+    books, markets = list(books), list(markets)
+    priced = {ev["id"]: ev for ev in odds}
+    gaps: list[str] = []
+    for ev in events:
+        game = f"{ev['away_team']} @ {ev['home_team']}"
+        if ev["id"] not in priced:
+            gaps.append(f"{game}: no odds from any book")
+            continue
+        have = {bk["key"]: {mk["key"] for mk in bk.get("markets", [])}
+                for bk in priced[ev["id"]]["bookmakers"]}
+        for book in books:
+            if book not in have:
+                gaps.append(f"{game}: {book} has no lines")
+                continue
+            missing = [m for m in markets if m not in have[book]]
+            if missing:
+                gaps.append(f"{game}: {book} missing {', '.join(missing)}")
+    return gaps
+
+
 def build_rows(
     payload: list[dict],
     snapshot_time: datetime,
