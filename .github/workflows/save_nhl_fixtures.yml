@@ -1,0 +1,38 @@
+name: Save NHL fixtures
+
+# Manual only. Downloads raw NHL /v1/score responses for a date range so they can
+# become test fixtures (tests/fixtures/nhl/). Free: no key, no Odds API credits.
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "First date (YYYY-MM-DD, ET schedule date)"
+        required: true
+      end:
+        description: "Last date (YYYY-MM-DD)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  save:
+    runs-on: ubuntu-24.04  # pinned: no surprise OS upgrades
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Save
+        env:
+          START: ${{ inputs.start }}
+          END: ${{ inputs.end }}
+        run: python -m nhl_betting.save_nhl_fixtures "$START" "$END"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nhl-fixtures-${{ github.run_id }}
+          path: output/nhl_fixtures/
+          retention-days: 30

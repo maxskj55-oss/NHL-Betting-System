@@ -9,6 +9,11 @@ odds_api:
   odds_format: american
   timeout_seconds: 20
 
+nhl_api:
+  # Unofficial NHL web API: no key, no credits. Endpoints can change without notice.
+  base_url: https://api-web.nhle.com/v1
+  timeout_seconds: 20
+
 budget:
   # Fail before a pull if x-requests-used + this pull's cost would exceed this.
   monthly_credits: 300
@@ -27,3 +32,15 @@ output:
 fixtures:
   events: tests/fixtures/events_sample.json
   odds: tests/fixtures/odds_sample.json
+
+morning:
+  # Daily NHL job (step 2): Tonight, Results, Game_Map. Uses no Odds API credits.
+  tonight_tab: Tonight
+  archive_tab: Tonight_Archive       # past days' Tonight rows move here (append only)
+  results_tab: Results
+  game_map_tab: Game_Map             # Odds API event id -> NHL game_id (append only)
+  results_lookback_days: 3           # settle any final game this many days back not yet in Results
+  match_tolerance_hours: 3           # Odds API commence_time vs NHL startTimeUTC
+  csv_dir: output/morning            # CSV copy of what each run wrote
+  raw_dir: output/raw_nhl            # raw NHL responses, kept for new fixtures
+  fixtures_dir: tests/fixtures/nhl   # used by --dry-run

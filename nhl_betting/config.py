@@ -44,6 +44,22 @@ class Config:
     raw_dir: Path
     events_fixture: Path
     odds_fixture: Path
+    nhl_api_base_url: str
+    nhl_api_timeout_seconds: float
+    morning: "MorningConfig"
+
+
+@dataclass(frozen=True)
+class MorningConfig:
+    tonight_tab: str
+    archive_tab: str
+    results_tab: str
+    game_map_tab: str
+    results_lookback_days: int
+    match_tolerance_hours: float
+    csv_dir: Path
+    raw_dir: Path
+    fixtures_dir: Path
 
 
 def _path(value: str) -> Path:
@@ -55,6 +71,7 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> Config:
     try:
         raw = yaml.safe_load(Path(path).read_text())
         api = raw["odds_api"]
+        m = raw["morning"]
         return Config(
             odds_api=OddsApiConfig(
                 base_url=api["base_url"].rstrip("/"),
@@ -73,6 +90,19 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> Config:
             raw_dir=_path(raw["output"]["raw_dir"]),
             events_fixture=_path(raw["fixtures"]["events"]),
             odds_fixture=_path(raw["fixtures"]["odds"]),
+            nhl_api_base_url=raw["nhl_api"]["base_url"].rstrip("/"),
+            nhl_api_timeout_seconds=float(raw["nhl_api"]["timeout_seconds"]),
+            morning=MorningConfig(
+                tonight_tab=m["tonight_tab"],
+                archive_tab=m["archive_tab"],
+                results_tab=m["results_tab"],
+                game_map_tab=m["game_map_tab"],
+                results_lookback_days=int(m["results_lookback_days"]),
+                match_tolerance_hours=float(m["match_tolerance_hours"]),
+                csv_dir=_path(m["csv_dir"]),
+                raw_dir=_path(m["raw_dir"]),
+                fixtures_dir=_path(m["fixtures_dir"]),
+            ),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ConfigError(f"config.yaml is missing or has a bad value: {exc}") from exc
