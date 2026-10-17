@@ -1,5 +1,6 @@
 """Closing job: start-time groups, the credit rule, skipped groups, the 5.5-hour hand-off."""
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -71,6 +72,7 @@ def test_pulls_15_minutes_before_groups_with_picks_or_leans(cfg):
 
 
 def test_skips_empty_groups_logs_them_and_spends_nothing(cfg, caplog):
+    caplog.set_level(logging.INFO, logger="nhl_betting")
     a, b = T0 + timedelta(hours=1), T0 + timedelta(hours=2)
     fake = Fake([tonight_row(1, a), tonight_row(2, b, lean="pass: line mismatch")])
     rep = closing.run(cfg, fake.env(), started_at=T0)
