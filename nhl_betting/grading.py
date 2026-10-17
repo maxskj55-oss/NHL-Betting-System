@@ -27,7 +27,7 @@ from typing import Iterable, Sequence
 
 from .odds_api import iso_z
 from .picks import (AUTO, CLAUDE, LABELS, PARLAY, PARLAY_LEG, PICK_GRADES_KEY, PICK_ID_RE,
-                    PLACED, TICKET_ID_RE, is_placed, is_test, leg_ids, unique_by_id)
+                    PICK_LABELS, PLACED, TICKET_ID_RE, is_placed, is_test, leg_ids, unique_by_id)
 from .pricing import (LOSS, PUSH, VOID, WIN, FinalScore, clv, decimal_odds, no_vig,
                       parlay_result, return_per_unit, settle_pick)
 from .snapshots import latest_pre_start
@@ -222,9 +222,9 @@ def _pick_prob(p: dict):
 def pick_items(picks: dict[str, dict]) -> list[dict]:
     out = []
     for pid, p in picks.items():
-        if norm(p.get("label")) not in LABELS:
-            log.warning("Picks: %s label %r is not 'bet candidate' or 'lean'; graded anyway",
-                        pid, norm(p.get("label")))
+        if norm(p.get("label")) not in PICK_LABELS:
+            log.warning("Picks: %s label %r is not one of %s; graded anyway",
+                        pid, norm(p.get("label")), ", ".join(PICK_LABELS))
         base = dict(item_id=pid, label=p.get("label"), game_id=p.get("game_id"),
                     market=p.get("market"), side=p.get("side"), line=p.get("line"),
                     prob=_pick_prob(p), stake=p.get("stake_units"),

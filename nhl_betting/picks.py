@@ -21,6 +21,9 @@ PICKS_COLUMNS: tuple[str, ...] = (
     "pick_id", "pick_time_utc", "game_id", "market", "side", "line", "price",
     "baseline_prob", "claude_prob", "claude_reason", "goalie_status", "label", "ev",
     "stake_units", "placed", "actual_price",
+    # Added Oct 17, 2026 (end of the tab only; existing headers are extended in place):
+    # an outside model's probability for the same side and line, and where it came from.
+    "outside_prob", "outside_source",
 )
 PARLAYS_COLUMNS: tuple[str, ...] = (
     "ticket_id", "ticket_time_utc", "leg_pick_ids", "combined_price", "stake_units",
@@ -37,7 +40,10 @@ PICK_GRADES_KEY: tuple[str, ...] = ("group", "item_id")
 
 # Pick_Grades groups, graded separately.
 AUTO, CLAUDE, PLACED, PARLAY_LEG, PARLAY = "auto", "claude", "placed", "parlay_leg", "parlay"
-LABELS = ("bet candidate", "lean")          # the only labels Picks holds
+LABELS = ("bet candidate", "lean")          # Tonight auto_lean values that are graded (group auto)
+# Labels a Picks row may carry. "best available" = the night's best rows picked to bet at a
+# fixed small stake even though EV isn't positive; graded like any pick, kept apart by label.
+PICK_LABELS = LABELS + ("best available",)
 TEST_PREFIX = "TEST-"                        # graded, with "test" in the note
 PICK_ID_RE = re.compile(r"^(TEST-)?\d{8}-\d{2,}$")
 TICKET_ID_RE = re.compile(r"^(TEST-)?T\d{8}-\d{2,}$")

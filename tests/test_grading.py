@@ -220,6 +220,29 @@ def test_pick_rows_make_claude_and_placed_groups_and_test_note():
     assert items[2]["prob"] == 0.55 and items[0]["note"] == "test"
 
 
+def test_best_available_label_is_graded_without_warning(caplog):
+    picks = {"20261020-01": pick("20261020-01", GID, "moneyline", "COL", "", -120,
+                                 label="best available", placed="yes")}
+    with caplog.at_level("WARNING"):
+        items = grading.pick_items(picks)
+    assert [(i["group"], i["label"]) for i in items] == [("claude", "best available"),
+                                                         ("placed", "best available")]
+    assert "graded anyway" not in caplog.text
+
+
+def test_unknown_pick_label_still_warns(caplog):
+    picks = {"20261020-02": pick("20261020-02", GID, "moneyline", "COL", "", -120, label="steal")}
+    with caplog.at_level("WARNING"):
+        items = grading.pick_items(picks)
+    assert len(items) == 1 and "graded anyway" in caplog.text
+
+
+def test_best_available_is_not_an_auto_lean():
+    base = {"game_date_et": "2026-10-17", "game_id": GID, "market": "moneyline", "line": "",
+            "fanduel_price": -110, "baseline_prob": 0.5, "stake_units": 0}
+    assert grading.auto_items([dict(base, side="COL", auto_lean="best available")]) == []
+
+
 def test_auto_items_only_bet_candidates_and_leans():
     base = {"game_date_et": "2026-10-17", "game_id": GID, "market": "moneyline", "line": "",
             "fanduel_price": -110, "baseline_prob": 0.53, "stake_units": 0}
@@ -275,7 +298,8 @@ def test_bad_pick_row_is_skipped_not_fatal():
 def test_columns_are_the_contract():
     assert PICKS_COLUMNS == ("pick_id", "pick_time_utc", "game_id", "market", "side", "line", "price",
                              "baseline_prob", "claude_prob", "claude_reason", "goalie_status", "label",
-                             "ev", "stake_units", "placed", "actual_price")
+                             "ev", "stake_units", "placed", "actual_price",
+                             "outside_prob", "outside_source")
     assert PARLAYS_COLUMNS == ("ticket_id", "ticket_time_utc", "leg_pick_ids", "combined_price",
                                "stake_units", "placed", "actual_price")
     assert PICK_GRADES_COLUMNS[:3] == ("group", "item_id", "label")
