@@ -19,7 +19,8 @@ slate:
   window_end_hour_local: 6
 
 output:
-  sink: csv                          # Sheets sink arrives with the Google Sheet setup
+  sink: sheets                       # sheets = Google Sheet + CSV backup; csv = CSV only
+  sheet_tab: Odds_Snapshots
   csv_path: output/odds_snapshots.csv
   raw_dir: output/raw                # raw API responses, kept for new fixtures
 

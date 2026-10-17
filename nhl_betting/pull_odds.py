@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 from .config import Config, ConfigError, get_odds_api_key, load_config
 from .odds_api import BudgetError, OddsApiClient, OddsApiError, check_budget, iso_z
+from .sheets import SheetsError, SheetsSink, authorized_session, get_sheet_id
 from .sinks import CsvSink, PrintSink, Sink
 from .snapshots import COLUMNS, SchemaError, build_rows, parse_time, validate_events
 
@@ -61,9 +62,24 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def run_live(cfg: Config, client: OddsApiClient | None = None, sink: Sink | None = None,
+def build_sinks(cfg: Config) -> list[Sink]:
+    """CSV backup always; the Google Sheet too when sink: sheets.
+
+    Built before any paid call so a missing Google secret costs no credits.
+    """
+    sinks: list[Sink] = [CsvSink(cfg.csv_path, COLUMNS)]
+    if cfg.sink == "sheets":
+        sinks.append(SheetsSink(authorized_session(), get_sheet_id(), cfg.sheet_tab, COLUMNS))
+    elif cfg.sink != "csv":
+        raise ConfigError(f"Unknown output.sink {cfg.sink!r} (use 'sheets' or 'csv').")
+    return sinks
+
+
+def run_live(cfg: Config, client: OddsApiClient | None = None,
+             sinks: list[Sink] | None = None,
              clock: Callable[[], datetime] = _utc_now) -> int:
     client = client or OddsApiClient(cfg.odds_api, get_odds_api_key())
+    sinks = sinks if sinks is not None else build_sinks(cfg)
     now = clock()
     start, end = slate_window(now, cfg.slate_timezone, cfg.window_end_hour_local)
     log.info("Slate window %s to %s", iso_z(start), iso_z(end))
@@ -103,7 +119,8 @@ def run_live(cfg: Config, client: OddsApiClient | None = None, sink: Sink | None
 
     rows, dropped = build_rows(odds, snapshot_time, cfg.odds_api.bookmakers, cfg.odds_api.markets)
     log.info("%d rows built, %d dropped (game already started)", len(rows), dropped)
-    (sink or CsvSink(cfg.csv_path, COLUMNS)).append(rows)
+    for s in sinks:
+        s.append(rows)
     return 0
 
 
@@ -151,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     except SchemaError as exc:
         log.error("API RESPONSE CHANGED SHAPE: %s", exc)
         return 3
-    except (ConfigError, OddsApiError, OSError, ValueError) as exc:
+    except (ConfigError, OddsApiError, SheetsError, OSError, ValueError) as exc:
         log.error("%s", exc)
         return 1
     except Exception as exc:  # unexpected: still show it on the run page

@@ -18,7 +18,7 @@ def load_fixture(name: str):
 def temp_config(tmp: Path) -> Config:
     """Real config.yaml, but output goes to a temp dir."""
     cfg = load_config()
-    return replace(cfg, csv_path=tmp / "odds_snapshots.csv", raw_dir=tmp / "raw")
+    return replace(cfg, sink="csv", csv_path=tmp / "odds_snapshots.csv", raw_dir=tmp / "raw")
 
 
 class FakeResponse:

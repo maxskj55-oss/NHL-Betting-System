@@ -40,6 +40,8 @@ jobs:
       - name: Pull odds
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
           DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
         run: python -m nhl_betting.pull_odds $DRY_RUN
 

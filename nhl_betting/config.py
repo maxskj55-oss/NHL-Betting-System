@@ -39,6 +39,7 @@ class Config:
     slate_timezone: str
     window_end_hour_local: int
     sink: str
+    sheet_tab: str
     csv_path: Path
     raw_dir: Path
     events_fixture: Path
@@ -67,6 +68,7 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> Config:
             slate_timezone=raw["slate"]["timezone"],
             window_end_hour_local=int(raw["slate"]["window_end_hour_local"]),
             sink=raw["output"]["sink"],
+            sheet_tab=raw["output"]["sheet_tab"],
             csv_path=_path(raw["output"]["csv_path"]),
             raw_dir=_path(raw["output"]["raw_dir"]),
             events_fixture=_path(raw["fixtures"]["events"]),

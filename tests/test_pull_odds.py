@@ -131,3 +131,19 @@ class DryRunTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SinkSetupTest(unittest.TestCase):
+    def test_missing_google_secret_stops_before_any_odds_call(self):
+        import os
+        from dataclasses import replace
+        from unittest import mock
+        from nhl_betting.config import ConfigError
+        with tempfile.TemporaryDirectory() as d:
+            cfg = replace(temp_config(Path(d)), sink="sheets")
+            session = FakeSession({})  # any odds call would raise AssertionError
+            client = OddsApiClient(cfg.odds_api, KEY, session=session)
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with self.assertRaises(ConfigError):
+                    run_live(cfg, client=client, clock=clock)
+            self.assertEqual(session.calls, [])
