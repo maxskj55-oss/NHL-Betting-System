@@ -83,3 +83,16 @@ class ReadTabTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BadHeaderTest(unittest.TestCase):
+    def test_reports_header_found(self):
+        import tempfile, os
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False) as f:
+            f.write("foo,bar\n1,2\n")
+        try:
+            with self.assertLogs("nhl_betting", level="ERROR") as logs:
+                self.assertEqual(mr.main(["--csv", f.name]), 1)
+            self.assertTrue(any("header row found: ['foo', 'bar']" in m for m in logs.output))
+        finally:
+            os.unlink(f.name)

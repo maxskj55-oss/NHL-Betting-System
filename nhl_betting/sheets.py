@@ -221,7 +221,9 @@ def read_tab(session, spreadsheet_id: str, tab: str) -> list[dict]:
                            timeout=60)
     if resp.status_code != 200:
         raise SheetsError(SheetsSink._explain(resp))
-    values = resp.json().get("values", [])
+    data = resp.json()
+    values = data.get("values", [])
+    log.info("Sheets: read %s (%d rows incl. header)", data.get("range", "?"), len(values))
     if not values:
         return []
     header, body = values[0], values[1:]

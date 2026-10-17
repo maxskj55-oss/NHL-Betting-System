@@ -30,6 +30,8 @@ from .snapshots import build_rows, parse_time
 log = logging.getLogger("nhl_betting.mismatch_report")
 FIXTURE = Path(__file__).resolve().parent.parent / "tests/fixtures/real/odds_20261017T153438Z.json"
 ET = ZoneInfo("America/New_York")
+REQUIRED = ("snapshot_time_utc", "odds_event_id", "start_time_utc", "home_team",
+            "away_team", "book", "market", "side", "line")
 
 
 @dataclass
@@ -190,6 +192,11 @@ def main(argv: list[str] | None = None) -> int:
             cfg = load_config()
             rows = read_tab(authorized_session(), get_sheet_id(), cfg.sheet_tab)
         log.info("Read %d Odds_Snapshots rows", len(rows))
+        if rows:
+            missing = [c for c in REQUIRED if c not in rows[0]]
+            if missing:
+                raise ValueError(f"Odds_Snapshots is missing column(s) {missing}; "
+                                 f"header row found: {list(rows[0].keys())[:13]}")
         games = compare_games(rows)
         report = render(games)
         log.info("\n%s", report)
