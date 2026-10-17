@@ -21,3 +21,5 @@ jobs:
       - run: python -m pytest -q
       - name: Dry run
         run: python -m nhl_betting.pull_odds --dry-run
+      - name: Mismatch report dry run
+        run: python -m nhl_betting.mismatch_report --dry-run

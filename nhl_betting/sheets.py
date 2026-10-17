@@ -212,3 +212,21 @@ def _col_letter(n: int) -> str:
         n, r = divmod(n - 1, 26)
         s = chr(65 + r) + s
     return s
+
+
+def read_tab(session, spreadsheet_id: str, tab: str) -> list[dict]:
+    """Read a whole tab as dicts keyed by its header row (read-only, one request)."""
+    url = f"{API}/{spreadsheet_id}/values/{quote(repr_tab(tab), safe='')}"
+    resp = session.request("GET", url, params={"valueRenderOption": "UNFORMATTED_VALUE"},
+                           timeout=60)
+    if resp.status_code != 200:
+        raise SheetsError(SheetsSink._explain(resp))
+    values = resp.json().get("values", [])
+    if not values:
+        return []
+    header, body = values[0], values[1:]
+    return [dict(zip(header, row + [""] * (len(header) - len(row)))) for row in body]
+
+
+def repr_tab(tab: str) -> str:
+    return f"'{tab}'"
