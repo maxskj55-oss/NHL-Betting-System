@@ -2,6 +2,8 @@ name: Save NHL fixtures
 
 # Manual only. Downloads raw NHL /v1/score responses for a date range so they can
 # become test fixtures (tests/fixtures/nhl/). Free: no key, no Odds API credits.
+# The files are uploaded as an artifact and also pushed to a throwaway branch
+# (fixtures/nhl-<run id>) so they can be fetched with git; main is not touched.
 on:
   workflow_dispatch:
     inputs:
@@ -13,7 +15,7 @@ on:
         required: true
 
 permissions:
-  contents: read
+  contents: write   # only to push the fixtures/nhl-<run id> branch
 
 jobs:
   save:
@@ -36,3 +38,12 @@ jobs:
           name: nhl-fixtures-${{ github.run_id }}
           path: output/nhl_fixtures/
           retention-days: 30
+      - name: Push to a fixtures branch
+        run: |
+          branch="fixtures/nhl-${{ github.run_id }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add -f output/nhl_fixtures/
+          git commit -q -m "NHL fixtures ${{ inputs.start }} to ${{ inputs.end }}"
+          git push origin "$branch"
