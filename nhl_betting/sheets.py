@@ -1,4 +1,4 @@
-"""Google Sheets writer for append-only tabs (Odds_Snapshots).
+"""Google Sheets writers: append-only tabs (SheetsSink) and keyed tabs (SheetTab).
 
 Uses the Sheets REST API with a service account. Never edits or deletes rows:
 it creates the tab and header if missing, refuses to write under a different
@@ -18,6 +18,7 @@ from urllib.parse import quote
 import requests
 
 from .config import ConfigError
+from .tabs import check_writable, norm, row_key
 
 log = logging.getLogger(__name__)
 
@@ -232,3 +233,128 @@ def read_tab(session, spreadsheet_id: str, tab: str) -> list[dict]:
 
 def repr_tab(tab: str) -> str:
     return f"'{tab}'"
+
+
+def _cell_value(value: Any) -> Any:
+    """Numbers and booleans stay typed; everything else is text (RAW input)."""
+    if isinstance(value, (bool, int, float)) or value == "":
+        return value
+    return str(value)
+
+
+class SheetTab(SheetsSink):
+    """A keyed tab: read rows, append new rows, update owned cells, delete rows.
+
+    Writes go only to the cells named; protected columns (Claude's, step 4's)
+    are refused before any request is sent. ensure() creates the tab and header
+    if missing and refuses a tab whose header differs from the contract.
+    """
+
+    def __init__(self, session, spreadsheet_id: str, tab: str, columns: Sequence[str],
+                 protected: Sequence[str] = (), **kwargs):
+        super().__init__(session, spreadsheet_id, tab, columns, **kwargs)
+        self.name = tab
+        self.protected = frozenset(protected)
+        self._gid: int | None = None
+
+    def ensure(self) -> "SheetTab":
+        self._ensure_tab()
+        self._ensure_header()
+        return self
+
+    def _sheet_gid(self) -> int:
+        if self._gid is None:
+            meta = self._call("GET", f"{API}/{self.sid}",
+                              params={"fields": "sheets.properties(sheetId,title)"})
+            for s in meta.get("sheets", []):
+                if s["properties"]["title"] == self.tab:
+                    self._gid = int(s["properties"]["sheetId"])
+                    break
+            else:
+                raise SheetsError(f"Tab {self.tab} not found")
+        return self._gid
+
+    def read_rows(self) -> list[tuple[int, dict]]:
+        last_col = _col_letter(len(self.columns))
+        got = self._call("GET", f"{API}/{self.sid}/values/{self._range(f'A2:{last_col}')}",
+                         params={"valueRenderOption": "UNFORMATTED_VALUE"})
+        out = []
+        for i, row in enumerate(got.get("values", [])):
+            if not any(norm(v) for v in row):
+                continue
+            padded = list(row) + [""] * (len(self.columns) - len(row))
+            out.append((i + 2, dict(zip(self.columns, padded))))
+        return out
+
+    def append_rows(self, rows: Sequence[dict], key_cols: Sequence[str]) -> int:
+        if not rows:
+            return 0
+        for r in rows:
+            check_writable(self, r, new_row=True)
+        values = [[_cell_value(r.get(c, "")) for c in self.columns] for r in rows]
+        wanted = {row_key(r, key_cols) for r in rows}
+        url = f"{API}/{self.sid}/values/{self._range('A1')}:append"
+        params = {"valueInputOption": "RAW", "insertDataOption": "INSERT_ROWS"}
+        for attempt in range(1, self.max_attempts + 1):
+            if attempt > 1:  # did the last attempt land after all?
+                have = {row_key(r, key_cols) for _, r in self.read_rows()} & wanted
+                if have == wanted:
+                    log.warning("Sheets %s: previous attempt had already written the rows", self.tab)
+                    return len(values)
+                if have:
+                    raise SheetsError(f"{self.tab}: {len(have)} of {len(wanted)} rows were written; "
+                                      "stopping so rows aren't duplicated. Check the tab by hand.")
+            try:
+                resp = self.session.request("POST", url, params=params,
+                                            json={"values": values}, timeout=30)
+            except requests.RequestException as exc:
+                reason = type(exc).__name__
+            else:
+                if resp.status_code == 200:
+                    log.info("Appended %d rows to sheet tab %s", len(values), self.tab)
+                    return len(values)
+                if resp.status_code not in RETRY_STATUSES:
+                    raise SheetsError(self._explain(resp))
+                reason = f"HTTP {resp.status_code}"
+            if attempt == self.max_attempts:
+                raise SheetsError(f"{self.tab} append failed after {attempt} attempts ({reason})")
+            log.warning("Sheets %s append %s, checking before retry", self.tab, reason)
+            time.sleep(self.backoff * attempt)
+        return 0  # pragma: no cover
+
+    def update_cells(self, updates: Sequence[tuple[int, dict]]) -> int:
+        """One batch request; each cell is its own range so nothing else is touched."""
+        if not updates:
+            return 0
+        data = []
+        for rownum, cells in updates:
+            check_writable(self, cells, new_row=False)
+            if rownum < 2:
+                raise SheetsError(f"{self.tab}: refusing to write the header row")
+            for col, value in cells.items():
+                letter = _col_letter(self.columns.index(col) + 1)
+                data.append({"range": f"'{self.tab}'!{letter}{rownum}",
+                             "values": [[_cell_value(value)]]})
+        self._call("POST", f"{API}/{self.sid}/values:batchUpdate",
+                   json={"valueInputOption": "RAW", "data": data})
+        log.info("Updated %d cells in %d rows of %s", len(data), len(updates), self.tab)
+        return len(updates)
+
+    def delete_rows(self, row_numbers: Sequence[int]) -> int:
+        nums = sorted(set(row_numbers), reverse=True)  # bottom first so numbers stay valid
+        if not nums:
+            return 0
+        if min(nums) < 2:
+            raise SheetsError(f"{self.tab}: refusing to delete the header row")
+        gid = self._sheet_gid()
+        reqs = [{"deleteDimension": {"range": {"sheetId": gid, "dimension": "ROWS",
+                                               "startIndex": n - 1, "endIndex": n}}}
+                for n in nums]
+        # No retry: a lost reply after a successful delete must not delete again.
+        saved, self.max_attempts = self.max_attempts, 1
+        try:
+            self._call("POST", f"{API}/{self.sid}:batchUpdate", json={"requests": reqs})
+        finally:
+            self.max_attempts = saved
+        log.info("Deleted %d rows from %s", len(nums), self.tab)
+        return len(nums)

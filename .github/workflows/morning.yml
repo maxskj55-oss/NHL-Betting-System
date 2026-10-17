@@ -1,0 +1,63 @@
+name: Morning NHL data
+
+# Daily step-2 job: Game_Map, Results and Tonight from the NHL web API.
+# Uses no Odds API credits: it never calls the Odds API, and ODDS_API_KEY is not passed.
+# Scheduled (approved by Max) plus manual "Run workflow". No automatic retries.
+on:
+  schedule:
+    # GitHub cron is UTC only: 8:17 am ET while daylight time lasts, 7:17 am ET after
+    # Nov 1 (EST). GitHub often starts scheduled runs 10-60 minutes late.
+    - cron: "17 12 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: saved fixtures, no API calls, nothing written"
+        type: boolean
+        default: false
+      date:
+        description: "Optional ET date to treat as today (YYYY-MM-DD)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: morning
+  cancel-in-progress: false
+
+jobs:
+  morning:
+    runs-on: ubuntu-24.04  # pinned: no surprise OS upgrades
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Tests (no run if these fail)
+        run: python -m pytest -q
+
+      - name: Morning job
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+          DATE_ARG: ${{ inputs.date && format('--date={0}', inputs.date) || '' }}
+        run: python -m nhl_betting.morning $DRY_RUN $DATE_ARG
+
+      # CSV copy of the rows written + raw NHL responses (can become tests/fixtures/nhl/).
+      - name: Upload CSV copies and raw responses
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: morning-${{ github.run_id }}
+          path: output/
+          if-no-files-found: warn
+          retention-days: 30

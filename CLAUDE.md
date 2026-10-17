@@ -30,10 +30,12 @@ Column names are shared with the claude.ai Project's rulebook. Don't rename or r
 
 | Tab | Written by | Rules |
 | --- | --- | --- |
-| Tonight | Code; Claude fills `claude_prob`, `claude_reason` | Never overwrite `claude_prob` or `claude_reason`. `adjusted_ev` is a sheet formula: EV from `claude_prob` if filled, else `baseline_prob`. Must include `projected_goalies` (Daily Faceoff projection when the baseline was captured). |
+| Tonight | Code; Claude fills `claude_prob`, `claude_reason` | Today's games only. Never overwrite `claude_prob` or `claude_reason`; code never writes `adjusted_ev` either. `adjusted_ev` is a sheet formula: EV from `claude_prob` if filled, else `baseline_prob`. Must include `projected_goalies` (Daily Faceoff projection when the baseline was captured, written by Pull odds). One row per game until step 3, then one row per game × market × side (key: `game_id`, `market`, `side`). |
+| Tonight_Archive | Code, append only | Past days' Tonight rows, copied whole (Claude's cells included) before they leave Tonight. Same columns plus `archived_at_utc`. |
+| Game_Map | Code, append only | `odds_event_id` → NHL `game_id`; join key from odds to results. |
 | Odds_Snapshots | Code, append only | Never edit or delete rows. Drop any snapshot taken after puck drop before writing. |
 | Picks, Parlays | Claude, then me | Code reads only, except Results fills closing prices and CLV. |
-| Results | Code | Final score, OT/SO flag, settlement per market, closing prices for both books, CLV per pick. |
+| Results | Code | One row per final game: score (shootout goal included), OT/SO flag, settlement per market, closing prices for both books, CLV per pick. Rows are never rewritten; step 4 fills only `closing_fanduel`, `closing_pinnacle`, `clv` (their exact shape is settled in step 4). |
 | Review | Formulas | Don't write from code. |
 
 ## Math (must match the rulebook)
@@ -58,9 +60,12 @@ Report what you ran and what you saw. Don't claim a step works from code reading
 
 ## Scheduling
 
-- **Manual runs only.** No `schedule:` triggers. Workflows run only when I ask Claude to start them (`gh workflow run pull_odds.yml --ref main`) or I press "Run workflow". Don't add a schedule without asking.
-- **No automatic retries.** If a live pull fails, don't start another. Report the error from the run page and wait for me. Re-run only when I say to, and at most once per request.
-- With no schedules, the 60-day auto-disable doesn't apply, so no heartbeat commit job is needed.
+- **Scheduled (approved Oct 17, 2026):**
+  - `morning.yml` runs daily at 12:17 UTC (8:17 am ET in daylight time, 7:17 am ET in winter; GitHub cron is UTC only and often starts 10–60 minutes late). It writes Game_Map, Results and Tonight from the NHL API and uses no Odds API credits (the key isn't passed to it).
+  - `heartbeat.yml` commits `.github/heartbeat.txt` to main every Monday so GitHub doesn't disable the schedule after 60 days without repository activity.
+- **Manual only:** `pull_odds.yml`, `mismatch_report.yml`, `save_nhl_fixtures.yml`. They run only when I ask Claude to start them (`gh workflow run pull_odds.yml --ref main`) or I press "Run workflow". Don't add or change a schedule without asking.
+- **No automatic retries.** If a live run fails (scheduled or manual), don't start another. Report the error from the run page and wait for me. Re-run only when I say to, and at most once per request.
+- Projected goalies (later step) belong in the Pull odds job, captured at odds-pull time, not in the morning job.
 - For closing prices (step 4), one manually started evening job can sleep until each start-time group (about 15 minutes before) instead of many runs.
 
 ## Plan first

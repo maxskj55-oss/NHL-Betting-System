@@ -30,8 +30,8 @@ Claude reads and writes only the sheet; GitHub does every pull and calculation, 
 
 | When (ET) | Who | What happens |
 | --- | --- | --- |
-| Every morning | GitHub (automatic) | Pulls schedule, results and stats from the NHL API and MoneyPuck. Writes the Tonight tab, including the Daily Faceoff projected goalies. |
-| Afternoon, betting nights | GitHub | Pulls FanDuel and Pinnacle odds. Code computes Pinnacle no-vig probability, fair price, EV and stake. Logs an automatic lean for every game line. |
+| Every morning (\~8 am) | GitHub (automatic) | Pulls schedule and results from the NHL API (MoneyPuck stats only if the optional model is built). Writes Tonight (games, start times, back-to-backs), settles yesterday's games in Results, and maps odds events to NHL games. No Odds API credits. |
+| Afternoon, betting nights | GitHub | Pulls FanDuel and Pinnacle odds and the Daily Faceoff projected goalies at the same moment. Code computes Pinnacle no-vig probability, fair price, EV and stake. Logs an automatic lean for every game line. |
 | 60–90 min before puck drop | You and Claude (chat) | Claude reads Tonight, searches for confirmed goalies and scratches, adjusts probabilities with a reason in the Tonight tab, and writes picks and parlays to the Picks and Parlays tabs. You choose what to place on FanDuel. |
 | \~15 min before each start-time group | GitHub | Saves closing prices and discards any snapshot taken after puck drop. The sheet computes CLV. |
 | Weekly | You and Claude | Review tab: CLV by market, automatic leans vs Claude picks, calibration. Adjust together. |
@@ -99,7 +99,7 @@ Seven core steps total 40–65 hours; Claude writes most of the code, in Python 
 | 1 | Odds puller → Odds\_Snapshots | 8–12 | Hour-15 checkpoint: runs unattended and writes tonight's FanDuel and Pinnacle game lines |
 | 2 | NHL API puller → Tonight and Results | 4–6 | Tonight lists every game; yesterday's finals and OT/SO flags appear |
 | 3 | Pinnacle no-vig baseline, EV, stake, auto leans | 3–5 | Every game line shows baseline probability, fair price and EV |
-| 4 | Closing snapshots, CLV, Parlays ledger, weekly heartbeat commit | 8–12 | Yesterday's picks show closing prices and CLV automatically |
+| 4 | Closing snapshots, CLV, Parlays ledger | 8–12 | Yesterday's picks show closing prices and CLV automatically |
 | 5 | Claude Project: rulebook, nightly prompt, Sheets connector | 5–10 | Hour-50 checkpoint: one full week of the complete loop |
 | 6 | Review tab | 4–7 | CLV by market, auto vs Claude, calibration buckets |
 | 7 | Fixes and testing | 8–13 | Two clean weeks without manual repair |
@@ -157,7 +157,7 @@ Three checkpoints are set in advance so the project ends on evidence, not drift.
 | --- | --- | --- |
 | Picks have no edge | The likeliest outcome for public-data NHL game lines | Paper first; CLV decides |
 | Project stalls before code works | Five betting ideas in four days; earlier versions stalled | Hour-15 checkpoint; build step 1 first, nothing else |
-| Public-repo schedules auto-disable after 60 days without repo activity | Odds pulls stop silently mid-season | Weekly heartbeat commit plus a calendar reminder to check Actions |
+| Public-repo schedules auto-disable after 60 days without repo activity | The morning job stops silently mid-season | Weekly heartbeat commit (in place since step 2) plus a calendar reminder to check Actions |
 | GitHub scheduled runs delayed or skipped | Missing closing prices | One evening job that sleeps until each start-time group; discard snapshots after puck drop |
 | Pinnacle odds delayed | Noisier CLV benchmark | FanDuel no-vig close as backup |
 | Unofficial NHL API changes | Puller breaks | Tests that fail loudly; MoneyPuck files as backup |
