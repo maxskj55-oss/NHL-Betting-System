@@ -59,6 +59,7 @@ Report what you ran and what you saw. Don't claim a step works from code reading
 ## Scheduling
 
 - **Manual runs only.** No `schedule:` triggers. Workflows run only when I ask Claude to start them (`gh workflow run pull_odds.yml --ref main`) or I press "Run workflow". Don't add a schedule without asking.
+- **No automatic retries.** If a live pull fails, don't start another. Report the error from the run page and wait for me. Re-run only when I say to, and at most once per request.
 - With no schedules, the 60-day auto-disable doesn't apply, so no heartbeat commit job is needed.
 - For closing prices (step 4), one manually started evening job can sleep until each start-time group (about 15 minutes before) instead of many runs.
 
