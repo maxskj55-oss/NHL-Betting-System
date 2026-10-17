@@ -134,6 +134,37 @@ def coverage_gaps(
     return gaps
 
 
+def line_mismatches(odds: list[dict], books: Iterable[str]) -> list[str]:
+    """Puck lines or totals where the books hang different numbers.
+
+    A Pinnacle no-vig price for -2.5 says nothing about FanDuel's -1.5, so these
+    markets can't be compared directly.
+    """
+    books = list(books)
+    out: list[str] = []
+    for ev in odds:
+        game = f"{ev['away_team']} @ {ev['home_team']}"
+        lines: dict[str, dict[str, str]] = {}
+        for bk in ev["bookmakers"]:
+            if bk["key"] not in books:
+                continue
+            for mk in bk["markets"]:
+                if mk["key"] not in ("spreads", "totals"):
+                    continue
+                if mk["key"] == "spreads":
+                    pt = next((o.get("point") for o in mk["outcomes"]
+                               if o["name"] == ev["home_team"]), None)
+                    label = f"{ev['home_team']} {_fmt_line(pt)}" if pt is not None else "?"
+                else:
+                    label = _fmt_line(mk["outcomes"][0].get("point"))
+                lines.setdefault(mk["key"], {})[bk["key"]] = label
+        for market, by_book in lines.items():
+            if len(by_book) > 1 and len(set(by_book.values())) > 1:
+                detail = ", ".join(f"{b} {v}" for b, v in sorted(by_book.items()))
+                out.append(f"{game}: {market} differ ({detail})")
+    return out
+
+
 def build_rows(
     payload: list[dict],
     snapshot_time: datetime,

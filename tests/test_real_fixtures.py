@@ -56,5 +56,24 @@ class RealFixtureTest(unittest.TestCase):
                                 self.assertEqual(len({o["point"] for o in mk["outcomes"]}), 1, where)
 
 
+
+class Oct17LineMismatchTest(unittest.TestCase):
+    """Oct 17, 2026 real data: books hung different numbers in 9 of 14 games."""
+
+    def test_detected(self):
+        from nhl_betting.snapshots import line_mismatches
+        path = FIXTURES / "real" / "odds_20261017T153438Z.json"
+        if not path.exists():
+            self.skipTest("fixture missing")
+        diffs = line_mismatches(_load(path), CFG.bookmakers)
+        self.assertEqual(len(diffs), 9)
+        self.assertEqual(sum("totals differ" in d for d in diffs), 7)
+        self.assertIn("Vancouver Canucks @ Tampa Bay Lightning: spreads differ "
+                      "(fanduel Tampa Bay Lightning -1.5, pinnacle Tampa Bay Lightning -2.5)", diffs)
+        # Books disagree on which team is the puck-line favorite here.
+        self.assertIn("New Jersey Devils @ Washington Capitals: spreads differ "
+                      "(fanduel Washington Capitals -1.5, pinnacle Washington Capitals 1.5)", diffs)
+
+
 if __name__ == "__main__":
     unittest.main()

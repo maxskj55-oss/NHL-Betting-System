@@ -22,8 +22,8 @@ from .config import Config, ConfigError, get_odds_api_key, load_config
 from .odds_api import BudgetError, OddsApiClient, OddsApiError, check_budget, iso_z
 from .sheets import SheetsError, SheetsSink, authorized_session, get_sheet_id
 from .sinks import CsvSink, PrintSink, Sink
-from .snapshots import (COLUMNS, SchemaError, build_rows, coverage_gaps, parse_time,
-                        validate_events)
+from .snapshots import (COLUMNS, SchemaError, build_rows, coverage_gaps, line_mismatches,
+                        parse_time, validate_events)
 from .teams import team_code
 
 log = logging.getLogger("nhl_betting.pull_odds")
@@ -64,6 +64,9 @@ def run_dry(cfg: Config, as_of: datetime | None, sink: Sink | None = None) -> in
 
 def report_gaps(events: list[dict], odds: list[dict], cfg: Config) -> None:
     """Warn (shown on the run page) when a game, book or market is missing."""
+    diffs = line_mismatches(odds, cfg.odds_api.bookmakers)
+    if diffs:
+        log.warning("Books hang different lines (not directly comparable): %s", "; ".join(diffs))
     gaps = coverage_gaps(events, odds, cfg.odds_api.bookmakers, cfg.odds_api.markets)
     if not gaps:
         log.info("Coverage complete: every game has every book and market")
