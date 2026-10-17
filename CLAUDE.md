@@ -4,11 +4,13 @@ Paper-first NHL game-line system. GitHub Actions pull NHL data and FanDuel and P
 
 ## Current step
 
-Step 2: NHL API puller → Tonight and Results. Work on this step only. When it's done, update this line to the next step from the build order in the overview.
+Step 3: Pinnacle no-vig baseline, EV, stake, auto leans. Work on this step only. When it's done, update this line to the next step from the build order in the overview.
 
-**Done when:** Tonight lists every game; yesterday's finals and OT/SO flags appear.
+**Done when:** Every game line shows baseline probability, fair price and EV.
 
-Step 1 (odds puller → Odds_Snapshots) finished Oct 17, 2026: real run wrote 168 rows to the sheet for 3 credits. Runs are manual only (see Scheduling).
+Step 1 (odds puller → Odds_Snapshots) finished Oct 17, 2026: real run wrote 168 rows to the sheet for 3 credits. Pull odds runs are manual only (see Scheduling).
+
+Step 2 (NHL API → Tonight, Results, Game_Map) finished Oct 17, 2026: manual real run of `morning.yml` wrote 14 Tonight rows, 15 Results rows (Oct 14–16 finals, OT/SO flags and settlements) and 14 Game_Map rows, 0 Odds API credits. Daily schedule starts Oct 18.
 
 ## Checkpoints (stop signals)
 
