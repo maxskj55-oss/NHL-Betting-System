@@ -4,13 +4,15 @@ Paper-first NHL game-line system. GitHub Actions pull NHL data and FanDuel and P
 
 ## Current step
 
-Step 3: Pinnacle no-vig baseline, EV, stake, auto leans. Work on this step only. When it's done, update this line to the next step from the build order in the overview.
+Step 4: Closing snapshots, CLV, Parlays ledger. Work on this step only. When it's done, update this line to the next step from the build order in the overview.
 
-**Done when:** Every game line shows baseline probability, fair price and EV.
+**Done when:** Yesterday's picks show closing prices and CLV automatically.
 
 Step 1 (odds puller → Odds_Snapshots) finished Oct 17, 2026: real run wrote 168 rows to the sheet for 3 credits. Pull odds runs are manual only (see Scheduling).
 
 Step 2 (NHL API → Tonight, Results, Game_Map) finished Oct 17, 2026: manual real run of `morning.yml` wrote 14 Tonight rows, 15 Results rows (Oct 14–16 finals, OT/SO flags and settlements) and 14 Game_Map rows, 0 Odds API credits. Daily schedule starts Oct 18.
+
+Step 3 (Pinnacle no-vig baseline, EV, stake, auto leans → Tonight) finished Oct 17, 2026: manual real Pull odds run (3 credits, 491 left) priced 13 games into 78 Tonight rows (60 pass, 18 "pass: line mismatch"; WSH–NJD had started and was left as its game row) and added `claude_line`; read back through the Sheets connector, `adjusted_ev` and `stake_units` formulas compute. The `claude_prob` branch of the formula is covered by tests but not yet seen live.
 
 ## Checkpoints (stop signals)
 
