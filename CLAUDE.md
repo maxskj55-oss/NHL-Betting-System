@@ -4,9 +4,11 @@ Paper-first NHL game-line system. GitHub Actions pull NHL data and FanDuel and P
 
 ## Current step
 
-Step 1: odds puller → Odds_Snapshots. Work on this step only. When it's done, update this line to the next step from the build order in the overview.
+Step 2: NHL API puller → Tonight and Results. Work on this step only. When it's done, update this line to the next step from the build order in the overview.
 
-**Done when:** the scheduled job runs unattended and appends tonight's FanDuel and Pinnacle game lines to Odds_Snapshots with snapshot time and start time, and the run uses 3 credits.
+**Done when:** Tonight lists every game; yesterday's finals and OT/SO flags appear.
+
+Step 1 (odds puller → Odds_Snapshots) finished Oct 17, 2026: real run wrote 168 rows to the sheet for 3 credits. Runs are manual only (see Scheduling).
 
 ## Checkpoints (stop signals)
 
@@ -56,8 +58,9 @@ Report what you ran and what you saw. Don't claim a step works from code reading
 
 ## Scheduling
 
-- Public repo: scheduled workflows disable after 60 days without repo activity, so keep the weekly heartbeat commit job.
-- Scheduled runs can be delayed or skipped. For closing prices, use one evening job that sleeps until each start-time group (about 15 minutes before) instead of many cron entries.
+- **Manual runs only.** No `schedule:` triggers. Workflows run only when I ask Claude to start them (`gh workflow run pull_odds.yml --ref main`) or I press "Run workflow". Don't add a schedule without asking.
+- With no schedules, the 60-day auto-disable doesn't apply, so no heartbeat commit job is needed.
+- For closing prices (step 4), one manually started evening job can sleep until each start-time group (about 15 minutes before) instead of many runs.
 
 ## Plan first
 

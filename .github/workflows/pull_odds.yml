@@ -1,10 +1,7 @@
 name: Pull odds
 
+# Manual only: Max asks Claude (or presses "Run workflow" in Actions). No schedule.
 on:
-  schedule:
-    # Tue, Wed, Fri, Sat at 3:52 pm Eastern (off the hour to avoid the top-of-hour queue).
-    - cron: "52 15 * * 2,3,5,6"
-      timezone: "America/New_York"
   workflow_dispatch:
     inputs:
       dry_run:
