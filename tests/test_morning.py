@@ -209,3 +209,36 @@ def test_morning_never_touches_the_odds_api(cfg, monkeypatch):
     monkeypatch.setattr(odds_api.OddsApiClient, "_get", boom)
     monkeypatch.delenv("ODDS_API_KEY", raising=False)
     run(cfg, memory_tabs(cfg))
+
+
+# ---- Step 4: the morning job grades yesterday's picks ------------------------
+def test_morning_job_grades_a_test_pick_automatically(cfg):
+    """Oct 16: PIT @ COL finished 5-2. A TEST- pick on COL is graded on the Oct 17 run."""
+    def ml(book, team, price):
+        return dict(snapshot("evCOL", book, team, "", snap="2026-10-17T00:45:00Z",
+                             home="Colorado Avalanche", away="Pittsburgh Penguins",
+                             start="2026-10-17T01:08:00Z"), market="h2h", price_american=price)
+    snaps = [ml("pinnacle", "Colorado Avalanche", -200), ml("pinnacle", "Pittsburgh Penguins", 170),
+             ml("fanduel", "Colorado Avalanche", -190), ml("fanduel", "Pittsburgh Penguins", 160)]
+    tabs = memory_tabs(cfg)
+    tabs.picks.rows.append({c: "" for c in tabs.picks.columns} | {
+        "pick_id": "TEST-20261016-01", "pick_time_utc": "2026-10-16T23:30:00Z",
+        "game_id": 2026020119, "market": "moneyline", "side": "COL", "line": "", "price": -190,
+        "baseline_prob": 0.63, "claude_prob": 0.64, "label": "lean", "stake_units": 0,
+        "placed": "no"})
+    rep = run(cfg, tabs, snaps)
+    grades = tabs.pick_grades.appended
+    assert rep.graded == 1 and len(grades) == 1
+    g = grades[0]
+    assert (g["group"], g["item_id"], g["result"], g["note"]) == ("claude", "TEST-20261016-01", "win", "test")
+    # Pinnacle -200 / +170 -> COL no-vig 9/14; -190 is decimal 29/19; CLV = 261/266 - 1 = -5/266.
+    assert g["close_prob"] == round(9 / 14, 6) and g["clv_book"] == "pinnacle"
+    assert g["clv"] == round(-5 / 266, 6)
+    assert (g["close_pinnacle_price"], g["close_fanduel_price"]) == (-200, -190)
+    assert g["prob_at_pick"] == 0.64 and g["game_date_et"] == "2026-10-16"
+    assert tabs.picks.updated == [] and tabs.picks.appended == []
+    # Results' step-4 columns stay blank (superseded by Pick_Grades).
+    col = by_id(tabs.results)[2026020119]
+    assert (col["closing_fanduel"], col["closing_pinnacle"], col["clv"]) == ("", "", "")
+    # A second morning run adds nothing.
+    assert run(cfg, tabs, snaps).graded == 0

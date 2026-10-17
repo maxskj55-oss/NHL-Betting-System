@@ -57,3 +57,19 @@ morning:
   csv_dir: output/morning            # CSV copy of what each run wrote
   raw_dir: output/raw_nhl            # raw NHL responses, kept for new fixtures
   fixtures_dir: tests/fixtures/nhl   # used by --dry-run
+
+grading:
+  # Step 4. Picks and Parlays are written by the nightly picker (Claude, then Max);
+  # code creates them with their headers if missing and otherwise only reads them.
+  # Pick_Grades is code's: one row per graded item, appended by the morning job.
+  picks_tab: Picks
+  parlays_tab: Parlays
+  grades_tab: Pick_Grades
+
+closing:
+  # Evening closing-snapshot job (manual start; closing.yml).
+  minutes_before_start: 15        # pull this long before each start-time group
+  handoff_after_minutes: 330      # past ~5.5 h of run time, start a fresh run for the rest
+  max_handoffs: 2                 # at most 2 fresh runs per night (3 runs x 5.5 h)
+  # A group is pulled only if it has a Picks row or a Tonight row with one of these.
+  qualifying_leans: ["bet candidate", "lean"]

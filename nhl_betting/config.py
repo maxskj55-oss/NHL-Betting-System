@@ -50,6 +50,8 @@ class Config:
     nhl_api_timeout_seconds: float
     morning: "MorningConfig"
     pricing: "PricingConfig"
+    grading: "GradingConfig"
+    closing: "ClosingConfig"
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,21 @@ class MorningConfig:
     csv_dir: Path
     raw_dir: Path
     fixtures_dir: Path
+
+
+@dataclass(frozen=True)
+class GradingConfig:
+    picks_tab: str
+    parlays_tab: str
+    grades_tab: str
+
+
+@dataclass(frozen=True)
+class ClosingConfig:
+    minutes_before_start: int        # wake this long before each start-time group
+    handoff_after_minutes: int       # start a fresh run past this much run time (GitHub stops jobs at 6 h)
+    max_handoffs: int                # chain length cap per night
+    qualifying_leans: tuple[str, ...]  # Tonight auto_lean values that justify a pull
 
 
 @dataclass(frozen=True)
@@ -88,6 +105,22 @@ def _pricing(raw: dict) -> PricingConfig:
     if any(b.units <= 0 for b in bands) or max_units <= 0:
         raise ConfigError("pricing: units and max_units must be above 0")
     return PricingConfig(threshold, bands, max_units)
+
+
+def _closing(raw: dict) -> ClosingConfig:
+    c = ClosingConfig(
+        minutes_before_start=int(raw["minutes_before_start"]),
+        handoff_after_minutes=int(raw["handoff_after_minutes"]),
+        max_handoffs=int(raw["max_handoffs"]),
+        qualifying_leans=tuple(raw["qualifying_leans"]),
+    )
+    if not 1 <= c.minutes_before_start <= 120:
+        raise ConfigError("closing.minutes_before_start must be 1-120")
+    if not 30 <= c.handoff_after_minutes <= 340:
+        raise ConfigError("closing.handoff_after_minutes must be 30-340 (GitHub stops jobs at 360)")
+    if c.max_handoffs < 0:
+        raise ConfigError("closing.max_handoffs can't be negative")
+    return c
 
 
 def _path(value: str) -> Path:
@@ -132,6 +165,12 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> Config:
                 fixtures_dir=_path(m["fixtures_dir"]),
             ),
             pricing=_pricing(raw["pricing"]),
+            grading=GradingConfig(
+                picks_tab=raw["grading"]["picks_tab"],
+                parlays_tab=raw["grading"]["parlays_tab"],
+                grades_tab=raw["grading"]["grades_tab"],
+            ),
+            closing=_closing(raw["closing"]),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ConfigError(f"config.yaml is missing or has a bad value: {exc}") from exc

@@ -33,7 +33,7 @@ Claude reads and writes only the sheet; GitHub does every pull and calculation, 
 | Every morning (\~8 am) | GitHub (automatic) | Pulls schedule and results from the NHL API (MoneyPuck stats only if the optional model is built). Writes Tonight (games, start times, back-to-backs), settles yesterday's games in Results, and maps odds events to NHL games. No Odds API credits. |
 | Afternoon, betting nights | GitHub | Pulls FanDuel and Pinnacle odds and the Daily Faceoff projected goalies at the same moment. Code computes Pinnacle no-vig probability, fair price, EV and stake. Logs an automatic lean for every game line. |
 | 60–90 min before puck drop | You and Claude (chat) | Claude reads Tonight, searches for confirmed goalies and scratches, adjusts probabilities with a reason in the Tonight tab, and writes picks and parlays to the Picks and Parlays tabs. You choose what to place on FanDuel. |
-| \~15 min before each start-time group | GitHub | Saves closing prices and discards any snapshot taken after puck drop. The sheet computes CLV. |
+| \~15 min before each start-time group | GitHub (one manual run per night) | Saves closing prices for groups with picks or leans and discards any snapshot taken after puck drop. The next morning's job computes CLV and settles each pick in Pick\_Grades. |
 | Weekly | You and Claude | Review tab: CLV by market, automatic leans vs Claude picks, calibration. Adjust together. |
 
 ## Scope
@@ -83,9 +83,10 @@ Six tabs; only Tonight, Picks and Parlays are touched in the nightly chat, which
 | --- | --- | --- |
 | Tonight | GitHub; Claude fills claude\_prob and claude\_reason | game\_id, start time, home, away, B2B flags, projected\_goalies, market, line, FanDuel price, Pinnacle no-vig probability (baseline\_prob), fair price, baseline\_ev, auto lean, claude\_prob, claude\_reason, adjusted\_ev (formula: EV from claude\_prob if filled, else baseline\_prob), stake\_units |
 | Odds\_Snapshots | GitHub (append only) | snapshot time, game\_id, book, market, side, line, price, start time, pre-start check |
-| Picks | Claude, then you | pick time, game\_id, market, side, price, baseline probability, Claude probability, reason, EV, stake (units), placed? (yes/no), actual price |
-| Parlays | Claude, then you | ticket id, leg ids, combined price, stake, placed?, result |
-| Results | GitHub | game\_id, final score, OT/SO flag, settlement per market, closing prices both books, CLV per pick |
+| Picks | Claude, then you | pick\_id, pick time, game\_id, market, side, line, price, baseline probability, Claude probability, reason, goalie status, label (bet candidate or lean), EV, stake (units), placed? (yes/no), actual price |
+| Parlays | Claude, then you | ticket id, ticket time, leg pick ids, combined price, stake, placed?, actual price (the result is in Pick\_Grades) |
+| Pick\_Grades | GitHub | one row per graded auto lean, Claude pick, placed bet, parlay leg and ticket: closing prices, CLV, result (added in step 4) |
+| Results | GitHub | game\_id, final score, OT/SO flag, settlement per market (closing prices and CLV per pick live in Pick\_Grades) |
 | Review | Formulas | CLV by market, auto leans vs Claude picks, calibration buckets, pick count, CLV vs tax hurdle |
 
 Every snapshot is kept, never overwritten, so the sheet becomes your own odds history.

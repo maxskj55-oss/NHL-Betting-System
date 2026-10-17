@@ -38,3 +38,17 @@ def test_heartbeat_is_weekly_and_only_touches_its_file():
     steps = data["jobs"]["beat"]["steps"]
     script = next(s["run"] for s in steps if "run" in s)
     assert "git add .github/heartbeat.txt" in script and "git add -A" not in script
+
+
+def test_closing_job_is_manual_and_can_hand_off_within_githubs_limit():
+    data, on = load("closing.yml")
+    assert set(on) == {"workflow_dispatch"}
+    assert set(on["workflow_dispatch"]["inputs"]) == {"dry_run", "hop", "after"}
+    assert data["permissions"] == {"contents": "read", "actions": "write"}
+    job = data["jobs"]["closing"]
+    assert job["timeout-minutes"] <= 360
+    from nhl_betting.config import load_config
+    assert load_config().closing.handoff_after_minutes + 20 <= job["timeout-minutes"]
+    assert data["concurrency"]["cancel-in-progress"] is False   # a fresh run waits, never overlaps
+    step = next(s for s in job["steps"] if s.get("name") == "Closing snapshots")
+    assert step["env"]["GITHUB_TOKEN"] == "${{ github.token }}"

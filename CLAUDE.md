@@ -38,8 +38,10 @@ Column names are shared with the claude.ai Project's rulebook. Don't rename or r
 | Tonight_Archive | Code, append only | Past days' Tonight rows, copied whole (Claude's cells and the formulas' computed values included) before they leave Tonight. Same columns plus `archived_at_utc`; `claude_line` comes after `archived_at_utc` because it was added later. |
 | Game_Map | Code, append only | `odds_event_id` → NHL `game_id`; join key from odds to results. |
 | Odds_Snapshots | Code, append only | Never edit or delete rows. Drop any snapshot taken after puck drop before writing. |
-| Picks, Parlays | Claude, then me | Code reads only, except Results fills closing prices and CLV. |
-| Results | Code | One row per final game: score (shootout goal included), OT/SO flag, settlement per market, closing prices for both books, CLV per pick. Rows are never rewritten; step 4 fills only `closing_fanduel`, `closing_pinnacle`, `clv` (their exact shape is settled in step 4). |
+| Picks | Claude, then me | Code creates the tab with its header if missing, then only reads it (every column protected). Columns: `pick_id`, `pick_time_utc`, `game_id`, `market`, `side`, `line`, `price`, `baseline_prob`, `claude_prob`, `claude_reason`, `goalie_status`, `label`, `ev`, `stake_units`, `placed`, `actual_price`. `pick_id` is `YYYYMMDD-NN` (`TEST-` prefix for test picks: graded with "test" in `note`). `label` is "bet candidate" or "lean" only; passes aren't logged here (Tonight_Archive keeps them). `market`/`side` as in Tonight; `line` and `price` are FanDuel's when picked; `placed` yes/no; `actual_price` blank = `price`. |
+| Parlays | Claude, then me | Created and read only, like Picks. Columns: `ticket_id` (`TYYYYMMDD-NN`), `ticket_time_utc`, `leg_pick_ids` (comma-separated Picks `pick_id`s), `combined_price`, `stake_units`, `placed`, `actual_price`. |
+| Pick_Grades | Code, append only (morning job) | One row per graded item, key (`group`, `item_id`), never rewritten. `group`: `auto` (Tonight_Archive bet candidates and leans), `claude` (every Picks row), `placed` (Picks rows placed = yes, at `actual_price`), `parlay_leg`, `parlay`. Columns: `group`, `item_id`, `label`, `game_id`, `game_date_et`, `market`, `side`, `line`, `price_taken`, `prob_at_pick` (`claude_prob` if filled, else `baseline_prob`), `stake_units`, `result` (win/loss/push/void), `return_per_unit`, `close_snapshot_utc`, `close_pinnacle_line`, `close_pinnacle_price`, `close_fanduel_line`, `close_fanduel_price`, `close_prob`, `clv_book`, `clv`, `note`, `graded_at_utc`. An item is written once its game is final (or postponed/cancelled: void). A pick marked placed later gets its `placed` row on a later run; already-written rows don't change. |
+| Results | Code | One row per final game: score (shootout goal included), OT/SO flag, settlement per market. Rows are never rewritten. `closing_fanduel`, `closing_pinnacle`, `clv` are superseded by Pick_Grades (step 4): they stay in place, blank, and code never writes them. |
 | Review | Formulas | Don't write from code. |
 
 ## Math (must match the rulebook)
@@ -47,8 +49,9 @@ Column names are shared with the claude.ai Project's rulebook. Don't rename or r
 - No-vig probability: proportional (divide each side's implied probability by the sum). Pinnacle is the baseline; implied probabilities use the exact American price.
 - Baseline (step 3): `baseline_prob` = Pinnacle no-vig for the same side and line; `fair_price` = American odds of `baseline_prob`; `baseline_ev` = `baseline_prob` × FanDuel decimal − 1. If the books hang different puck lines or totals, no conversion is guessed: baseline blank, `auto_lean` = "pass: line mismatch". Pinnacle missing: "pass: no baseline".
 - `auto_lean` from `baseline_ev`: "bet candidate" at `pricing.bet_candidate_min_ev` (3%) or more, "lean" above 0, "pass" at 0 or below. `stake_units` from `adjusted_ev`: 3–5% = 0.5, 5–8% = 0.75, 8% or more = 1.0, maximum 1.5, 0 below 3% (`pricing.stake_bands`, `pricing.max_units`).
-- CLV = decimal price taken × closing no-vig probability of that side − 1. Pinnacle's close first; FanDuel's no-vig close if Pinnacle is missing.
-- Settlement: moneyline, puck line and totals include OT and shootout; the shootout winner gets +1 goal and the total gets exactly +1 goal. Whole-number totals push.
+- CLV = decimal price taken × closing no-vig probability of that side − 1. Close = the game's last pre-start snapshot. Pinnacle's no-vig close when Pinnacle's closing line for that side equals the pick's line; else FanDuel's no-vig close at that line; else CLV blank and `note` says why (e.g. "no close at line 6.5 (pinnacle 6, fanduel 6)").
+- Settlement: moneyline, puck line and totals include OT and shootout; the shootout winner gets +1 goal and the total gets exactly +1 goal. Whole-number totals push. Each pick settles at the line it was taken (its own `line`), from Results' score.
+- Parlays: any losing leg loses the ticket. Void legs drop out (FanDuel's rule) and the ticket pays the remaining legs' product; pushed legs are treated as void too (assumption: FanDuel's general rules state only the void rule). All legs void = ticket void. Each leg gets its own CLV; the ticket's `clv` is the product of (1 + leg CLV) − 1.
 
 ## Code conventions
 
@@ -69,11 +72,10 @@ Report what you ran and what you saw. Don't claim a step works from code reading
 - **Scheduled (approved Oct 17, 2026):**
   - `morning.yml` runs daily at 12:17 UTC (8:17 am ET in daylight time, 7:17 am ET in winter; GitHub cron is UTC only and often starts 10–60 minutes late). It writes Game_Map, Results and Tonight from the NHL API and uses no Odds API credits (the key isn't passed to it).
   - `heartbeat.yml` commits `.github/heartbeat.txt` to main every Monday so GitHub doesn't disable the schedule after 60 days without repository activity.
-- **Manual only:** `pull_odds.yml`, `mismatch_report.yml`, `save_nhl_fixtures.yml`. They run only when I ask Claude to start them (`gh workflow run pull_odds.yml --ref main`) or I press "Run workflow". Don't add or change a schedule without asking.
+- **Manual only:** `pull_odds.yml`, `closing.yml`, `mismatch_report.yml`, `save_nhl_fixtures.yml`. They run only when I ask Claude to start them (`gh workflow run pull_odds.yml --ref main`) or I press "Run workflow". Don't add or change a schedule without asking.
 - **No automatic retries.** If a live run fails (scheduled or manual), don't start another. Report the error from the run page and wait for me. Re-run only when I say to, and at most once per request.
 - Projected goalies (later step) belong in the Pull odds job, captured at odds-pull time, not in the morning job.
-- For closing prices (step 4), one manually started evening job can sleep until each start-time group (about 15 minutes before) instead of many runs.
-- Step 4 note: Results should settle each pick at the line it was taken, not only at the last snapshot's line.
+- **Closing job (`closing.yml`, step 4):** I press Run workflow once per betting night. It sleeps until 15 minutes before each start-time group (Tonight's `start_time_utc`), re-reads Picks and Tonight, and pulls (3 credits, every game not yet started, appended to Odds_Snapshots) only if the group has a Picks row or a Tonight row whose `auto_lean` is "bet candidate" or "lean"; empty groups are skipped and logged. Monthly budget check before every pull. It never writes Tonight, Picks or Parlays. GitHub stops jobs at 6 hours: when the next wake-up is past 330 minutes of run time, the run waits until then and starts a fresh run of itself (workflow_dispatch, `hop`/`after` inputs) for later groups; at most 2 fresh runs a night. That hand-off is part of one press of Run workflow, not a retry: a failed run starts nothing.
 
 ## Plan first
 

@@ -1,7 +1,7 @@
 """Betting math that must match the rulebook (CLAUDE.md, "Math").
 
 Step 2: settlement. Step 3: no-vig probability, fair price, EV, auto leans and
-stakes. Step 4 adds CLV here.
+stakes. Step 4: CLV, settling one pick at its own line, and parlay tickets.
 
 Settlement rules: moneyline, puck line and totals include OT and the shootout.
 The shootout winner gets +1 goal and the total gets exactly +1 goal.
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Sequence
 
-WIN, LOSS, PUSH = "win", "loss", "push"
+WIN, LOSS, PUSH, VOID = "win", "loss", "push", "void"
 OVER, UNDER = "over", "under"
 
 BET_CANDIDATE, LEAN, PASS = "bet candidate", "lean", "pass"
@@ -173,3 +173,72 @@ def settle_total(total_goals: int, line: float, side: str) -> str:
     if side not in (OVER, UNDER):
         raise ValueError(f"Total side must be Over or Under, got {side!r}")
     return WIN if outcome == side else LOSS
+
+
+# ---- Step 4: CLV, one pick's settlement, parlays -----------------------------
+MONEYLINE, PUCK_LINE, TOTAL = "moneyline", "puck_line", "total"
+
+
+def clv(american_taken: float, close_prob: float) -> float:
+    """Closing line value: decimal price taken x closing no-vig probability - 1."""
+    if not 0 < close_prob < 1:
+        raise ValueError(f"Closing probability must be between 0 and 1, got {close_prob}")
+    return decimal_odds(american_taken) * close_prob - 1
+
+
+def settle_pick(market: str, side: str, line: float | None, score: FinalScore,
+                home: str, away: str) -> str:
+    """win / loss / push for one pick at the line it was taken.
+
+    `side` is a team code (moneyline, puck line) or over / under (total).
+    """
+    if market == TOTAL:
+        if line is None:
+            raise ValueError("A total pick needs a line")
+        return settle_total(score.total, line, side)
+    if side not in (home, away):
+        raise ValueError(f"Side {side!r} is neither team ({away} @ {home})")
+    margin = score.margin_home if side == home else -score.margin_home
+    if market == MONEYLINE:
+        return WIN if margin > 0 else LOSS
+    if market == PUCK_LINE:
+        if line is None:
+            raise ValueError("A puck line pick needs a line")
+        return settle_spread(margin, line)
+    raise ValueError(f"Unknown market {market!r}")
+
+
+def return_per_unit(result: str, american: float) -> float:
+    """Profit per unit staked: decimal - 1 on a win, -1 on a loss, 0 on a push or void."""
+    if result == WIN:
+        return decimal_odds(american) - 1
+    if result == LOSS:
+        return -1.0
+    if result in (PUSH, VOID):
+        return 0.0
+    raise ValueError(f"Unknown result {result!r}")
+
+
+def parlay_result(leg_results: Sequence[str], leg_decimals: Sequence[float],
+                  full_decimal: float) -> tuple[str, float | None]:
+    """(result, decimal price paid) for a ticket from its legs.
+
+    Any losing leg loses the ticket. Void legs drop out (FanDuel's rule); pushed
+    legs are treated the same way (an assumption: FanDuel's general rules state
+    only the void rule). With no legs dropped the ticket pays `full_decimal`
+    (the ticket's own price); otherwise the product of the remaining legs'
+    prices. If every leg drops out, the ticket is void.
+    """
+    if len(leg_results) != len(leg_decimals) or not leg_results:
+        raise ValueError("Need one price per leg and at least one leg")
+    if LOSS in leg_results:
+        return LOSS, None
+    kept = [d for r, d in zip(leg_results, leg_decimals) if r == WIN]
+    if not kept:
+        return VOID, None
+    if len(kept) == len(leg_results):
+        return WIN, full_decimal
+    price = 1.0
+    for d in kept:
+        price *= d
+    return WIN, price

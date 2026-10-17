@@ -1,0 +1,69 @@
+name: Closing snapshots
+
+# Manual only: Max presses "Run workflow" once per betting night (or asks Claude to start it).
+# The run sleeps until ~15 min before each start-time group and pulls odds (3 credits) only for
+# groups with a Picks row or a Tonight bet candidate / lean; empty groups are skipped and logged.
+# GitHub stops a job at 6 hours: past ~5.5 hours the run starts a fresh run of this workflow
+# (workflow_dispatch, below) for the remaining groups. That hand-off is not a retry: a failed
+# run never starts another.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: saved fixtures, simulated clock, no API calls, no credits"
+        type: boolean
+        default: false
+      hop:
+        description: "Set by the hand-off; leave at 0"
+        required: false
+        default: "0"
+      after:
+        description: "Set by the hand-off (only groups starting after this UTC time); leave blank"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions: write     # lets the run start a fresh run of this workflow for late groups
+
+concurrency:
+  group: closing
+  cancel-in-progress: false
+
+jobs:
+  closing:
+    runs-on: ubuntu-24.04  # pinned: no surprise OS upgrades
+    timeout-minutes: 355   # GitHub's cap is 360; the run hands off at 330 minutes
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Tests (no pull if these fail)
+        run: python -m pytest -q
+
+      - name: Closing snapshots
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+          HOP: ${{ inputs.hop || '0' }}
+          AFTER: ${{ inputs.after }}
+        run: python -m nhl_betting.closing $DRY_RUN --hop "$HOP" --after "$AFTER"
+
+      - name: Upload snapshot CSV and raw responses
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: closing-${{ github.run_id }}
+          path: output/
+          if-no-files-found: warn
+          retention-days: 90

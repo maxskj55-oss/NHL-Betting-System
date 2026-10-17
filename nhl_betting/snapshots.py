@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
 from .odds_api import iso_z
+from .tabs import norm
 
 log = logging.getLogger(__name__)
 
@@ -212,3 +213,19 @@ def build_rows(
             log.warning("Dropped %s @ %s: started at %s, before snapshot %s",
                         ev["away_team"], ev["home_team"], iso_z(start), snap)
     return rows, dropped
+
+
+def latest_pre_start(snapshots: Sequence[dict]) -> dict[str, list[dict]]:
+    """{odds_event_id: rows of that game's latest snapshot taken before puck drop}."""
+    best: dict[str, str] = {}
+    keep: dict[str, list[dict]] = {}
+    for r in snapshots:
+        eid = norm(r.get("odds_event_id"))
+        snap = norm(r.get("snapshot_time_utc"))
+        if not eid or not snap or parse_time(snap) >= parse_time(norm(r.get("start_time_utc"))):
+            continue
+        if eid not in best or snap > best[eid]:
+            best[eid], keep[eid] = snap, []
+        if snap == best[eid]:
+            keep[eid].append(r)
+    return keep

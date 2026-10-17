@@ -40,7 +40,7 @@ from .morning import (TONIGHT_COLUMNS, TONIGHT_FORMULAS, TONIGHT_KEY, TONIGHT_OW
 from .pricing import (PASS_LINE_MISMATCH, PASS_NO_BASELINE, auto_lean, decimal_odds,
                       expected_value, fair_american, no_vig, stake_units)
 from .sheets import _col_letter
-from .snapshots import parse_time
+from .snapshots import latest_pre_start, parse_time
 from .tabs import Tab, norm, row_key
 from .teams import team_code
 
@@ -113,22 +113,6 @@ def _line(value) -> float | None:
 def _same_line(a, b) -> bool:
     la, lb = _line(a), _line(b)
     return la == lb
-
-
-def latest_pre_start(snapshots: Sequence[dict]) -> dict[str, list[dict]]:
-    """{odds_event_id: rows of that game's latest snapshot taken before puck drop}."""
-    best: dict[str, str] = {}
-    keep: dict[str, list[dict]] = {}
-    for r in snapshots:
-        eid = norm(r.get("odds_event_id"))
-        snap = norm(r.get("snapshot_time_utc"))
-        if not eid or not snap or parse_time(snap) >= parse_time(norm(r.get("start_time_utc"))):
-            continue
-        if eid not in best or snap > best[eid]:
-            best[eid], keep[eid] = snap, []
-        if snap == best[eid]:
-            keep[eid].append(r)
-    return keep
 
 
 @dataclass

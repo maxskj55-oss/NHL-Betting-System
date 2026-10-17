@@ -12,6 +12,9 @@ from the sheet instead). Order of work:
 3. Tonight: move past days' rows to Tonight_Archive, then add or refresh one row
    per game today. Only code-owned game cells are written; claude_prob,
    claude_reason and the odds columns (Pull odds, step 3) are never touched.
+4. Pick_Grades (step 4): grade auto leans, Claude's picks, placed bets and
+   parlays whose games are now final: closing prices, CLV and settlement
+   (grading.py). Picks and Parlays are only read.
 
 Exit codes: 0 ok, 1 error, 3 API shape changed or a score can't be settled.
 """
@@ -29,11 +32,13 @@ from pathlib import Path
 from typing import Callable, Sequence
 from zoneinfo import ZoneInfo
 
+from . import grading
 from .config import Config, ConfigError, load_config
 from .games import Game, et_date, parse_games, teams_that_played
 from .matching import events_from_snapshots, match_events
 from .nhl_api import NhlApiClient, NhlApiError, SchemaError
 from .odds_api import iso_z
+from .picks import PARLAYS_COLUMNS, PICK_GRADES_COLUMNS, PICKS_COLUMNS
 from .pricing import SettlementError, settle_spread, settlement_score, total_outcome
 from .sheets import SheetsError, SheetTab, authorized_session, get_sheet_id, read_tab
 from .sinks import CsvSink
@@ -73,7 +78,9 @@ RESULTS_COLUMNS: tuple[str, ...] = (
     "total_line_pinnacle", "total_result_pinnacle", "settled_at_utc",
     "closing_fanduel", "closing_pinnacle", "clv",
 )
-RESULTS_PROTECTED: tuple[str, ...] = ("closing_fanduel", "closing_pinnacle", "clv")  # step 4
+# closing_fanduel, closing_pinnacle and clv are superseded by Pick_Grades (step 4):
+# they stay in place, blank, and code never writes them.
+RESULTS_PROTECTED: tuple[str, ...] = ("closing_fanduel", "closing_pinnacle", "clv")
 
 GAME_MAP_COLUMNS: tuple[str, ...] = (
     "odds_event_id", "game_id", "game_date_et", "home", "away",
@@ -89,6 +96,9 @@ class MorningTabs:
     archive: Tab
     results: Tab
     game_map: Tab
+    picks: Tab | None = None          # read only (every column protected)
+    parlays: Tab | None = None        # read only
+    pick_grades: Tab | None = None    # None: grading skipped (e.g. a tab couldn't be opened)
 
 
 @dataclass
@@ -98,6 +108,7 @@ class Report:
     tonight_added: int = 0
     tonight_updated: int = 0
     archived: int = 0
+    graded: int = 0
     problems: list[str] = field(default_factory=list)   # settlement/shape problems -> exit 3
 
 
@@ -268,11 +279,17 @@ def run(cfg: Config, today: date, fetch: Callable[[date], list[Game]], tabs: Mor
     update_results(tabs, games, today, snapshots, event_map, now, rep)
     played_yesterday = teams_that_played(by_date[today - timedelta(days=1)])
     update_tonight(tabs, by_date[today], played_yesterday, today, tz, now, rep)
+    if tabs.pick_grades is not None:
+        void = {str(g.game_id): g.game_date.isoformat() for g in games
+                if g.schedule_state in ("PPD", "CNCL") and g.game_date < today}
+        g_rep = grading.apply(tabs.pick_grades, tabs.picks, tabs.parlays, tabs.archive,
+                              tabs.results, tabs.game_map, snapshots, void, now)
+        rep.graded = len(g_rep.rows)
 
     log.info("SUMMARY %s: Tonight %d games (%d added, %d updated, %d old rows archived); "
-             "Results %d settled; Game_Map %d mapped; 0 Odds API credits",
+             "Results %d settled; Game_Map %d mapped; Pick_Grades %d rows; 0 Odds API credits",
              today, len([g for g in by_date[today] if g.is_scheduled_ok]), rep.tonight_added,
-             rep.tonight_updated, rep.archived, rep.settled, rep.mapped)
+             rep.tonight_updated, rep.archived, rep.settled, rep.mapped, rep.graded)
     return rep
 
 
@@ -306,6 +323,9 @@ def memory_tabs(cfg: Config) -> MorningTabs:
         archive=MemoryTab(m.archive_tab, ARCHIVE_COLUMNS),
         results=MemoryTab(m.results_tab, RESULTS_COLUMNS, RESULTS_PROTECTED),
         game_map=MemoryTab(m.game_map_tab, GAME_MAP_COLUMNS),
+        picks=MemoryTab(cfg.grading.picks_tab, PICKS_COLUMNS, PICKS_COLUMNS),
+        parlays=MemoryTab(cfg.grading.parlays_tab, PARLAYS_COLUMNS, PARLAYS_COLUMNS),
+        pick_grades=MemoryTab(cfg.grading.grades_tab, PICK_GRADES_COLUMNS),
     )
 
 
@@ -317,6 +337,18 @@ def sheet_tabs(cfg: Config, session, sid: str) -> MorningTabs:
         results=SheetTab(session, sid, m.results_tab, RESULTS_COLUMNS, RESULTS_PROTECTED).ensure(),
         game_map=SheetTab(session, sid, m.game_map_tab, GAME_MAP_COLUMNS).ensure(),
     )
+
+
+def grading_sheet_tabs(cfg: Config, session, sid: str) -> tuple[SheetTab, SheetTab, SheetTab]:
+    """Picks and Parlays (created with their headers if missing, then read only) and Pick_Grades."""
+    g = cfg.grading
+    return (picks_sheet_tab(cfg, session, sid),
+            SheetTab(session, sid, g.parlays_tab, PARLAYS_COLUMNS, PARLAYS_COLUMNS).ensure(),
+            SheetTab(session, sid, g.grades_tab, PICK_GRADES_COLUMNS).ensure())
+
+
+def picks_sheet_tab(cfg: Config, session, sid: str) -> SheetTab:
+    return SheetTab(session, sid, cfg.grading.picks_tab, PICKS_COLUMNS, PICKS_COLUMNS).ensure()
 
 
 def tonight_sheet_tab(cfg: Config, session, sid: str) -> SheetTab:
@@ -351,7 +383,7 @@ def print_table(title: str, columns: Sequence[str], rows: Sequence[dict]) -> Non
 
 def save_csv_copies(cfg: Config, tabs: MorningTabs) -> None:
     """CSV copy of every row this run appended (uploaded with the run)."""
-    for tab in (tabs.game_map, tabs.results, tabs.tonight, tabs.archive):
+    for tab in (tabs.game_map, tabs.results, tabs.tonight, tabs.archive, tabs.pick_grades):
         rows = getattr(tab, "appended", None)
         if rows:
             CsvSink(cfg.morning.csv_dir / f"{tab.name}.csv", tab.columns).append(rows)
@@ -387,7 +419,7 @@ def run_dry(cfg: Config, today: date | None) -> Report:
     now = datetime.combine(today, datetime.min.time(), ZoneInfo(cfg.slate_timezone)).replace(hour=8)
     rep = run(cfg, today, fixture_fetcher(cfg.morning.fixtures_dir), tabs, snapshots,
               now.astimezone(timezone.utc))
-    for tab in (tabs.game_map, tabs.results, tabs.tonight):
+    for tab in (tabs.game_map, tabs.results, tabs.tonight, tabs.pick_grades):
         print_table(tab.name, tab.columns, tab.appended)
     return rep
 
@@ -399,8 +431,17 @@ def run_live(cfg: Config, today: date | None) -> Report:
     tabs = sheet_tabs(cfg, session, sid)
     tabs = MorningTabs(*(_RecordingTab(t) for t in (tabs.tonight, tabs.archive,
                                                      tabs.results, tabs.game_map)))
+    grading_problem = ""
+    try:
+        tabs.picks, tabs.parlays, grades = grading_sheet_tabs(cfg, session, sid)
+        tabs.pick_grades = _RecordingTab(grades)
+    except SheetsError as exc:   # don't let a Picks/Parlays layout problem stop Results and Tonight
+        grading_problem = f"Pick_Grades skipped: {exc}"
+        log.error("%s", grading_problem)
     now = datetime.now(timezone.utc)
     rep = run(cfg, today or _et_today(cfg, now), live_fetcher(cfg), tabs, snapshots, now)
+    if grading_problem:
+        rep.problems.append(grading_problem)
     save_csv_copies(cfg, tabs)
     return rep
 
