@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
@@ -106,6 +107,27 @@ def run_live(cfg: Config, client: OddsApiClient | None = None, sink: Sink | None
     return 0
 
 
+def _annotate(level: str, message: str) -> None:
+    """In GitHub Actions, show a message on the run's summary page (level: error/warning/notice)."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        clean = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        sys.stdout.write(f"::{level} title=pull_odds::{clean}\n")
+        sys.stdout.flush()
+
+
+class _AnnotationHandler(logging.Handler):
+    """Mirror WARNING+ log lines and credit lines to GitHub annotations."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        msg = record.getMessage()
+        if record.levelno >= logging.ERROR:
+            _annotate("error", msg)
+        elif record.levelno >= logging.WARNING:
+            _annotate("warning", msg)
+        elif msg.startswith(("Credits for this run", "Appended", "No games tonight", "DRY RUN: would")):
+            _annotate("notice", msg)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dry-run", action="store_true",
@@ -115,6 +137,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    pkg_log = logging.getLogger("nhl_betting")
+    if not any(isinstance(h, _AnnotationHandler) for h in pkg_log.handlers):
+        pkg_log.addHandler(_AnnotationHandler())
     try:
         cfg = load_config(args.config) if args.config else load_config()
         if args.dry_run:
@@ -128,6 +153,9 @@ def main(argv: list[str] | None = None) -> int:
         return 3
     except (ConfigError, OddsApiError, OSError, ValueError) as exc:
         log.error("%s", exc)
+        return 1
+    except Exception as exc:  # unexpected: still show it on the run page
+        log.exception("Unexpected %s: %s", type(exc).__name__, exc)
         return 1
 
 
